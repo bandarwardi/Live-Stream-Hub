@@ -12,7 +12,10 @@ async function bootstrap() {
   
   const configService = app.get(ConfigService);
   const corsOrigins = configService.get<string>('CORS_ORIGINS');
-  const origins = corsOrigins ? corsOrigins.split(',') : '*';
+  let origins: string | string[] = '*';
+  if (corsOrigins && corsOrigins !== '*') {
+    origins = corsOrigins.split(',');
+  }
 
   app.enableCors({
     origin: origins,
