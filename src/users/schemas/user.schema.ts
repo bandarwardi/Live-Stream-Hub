@@ -39,6 +39,20 @@ export class User extends Document {
   @Prop({ default: null })
   displayName: string;
 
+  @Prop({ default: false })
+  isDeleted: boolean;
+
+  @Prop({ default: null })
+  deletedAt: Date;
+
+  @Prop({ default: null })
+  deletionGracePeriodUntil: Date;
+
+  @Prop({ default: null })
+  usernameReservedUntil: Date;
+
+  @Prop({ default: null })
+  originalUsername: string;
 
 
   // Used for tracking the family of refresh tokens for reuse detection

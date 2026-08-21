@@ -23,15 +23,18 @@ export class AuthService {
 
     const { uid, email, name, picture, phone_number } = decodedToken;
 
-    // Check by firebaseUid first
-    let user = await this.usersService.findByFirebaseUid(uid);
+    // Check by firebaseUid first (including deleted)
+    let user = await this.usersService.findAnyByFirebaseUid(uid);
 
     if (!user) {
-      // Try to link account
-      user = await this.usersService.findLinkableAccount(email, phone_number);
+      // Try to link account (including deleted)
+      user = await this.usersService.findAnyLinkableAccount(email, phone_number);
 
       if (user) {
-        // Link account
+        if (user.firebaseUid && user.firebaseUid !== uid) {
+          throw new UnauthorizedException('هذا البريد أو الرقم مربوط بحساب آخر.');
+        }
+
         user.firebaseUid = uid;
         if (picture && !user.avatarUrl) user.avatarUrl = picture;
         if (email && !user.email) {
@@ -42,7 +45,6 @@ export class AuthService {
           user.phone = phone_number;
           user.phoneVerified = true;
         }
-        await user.save();
       } else {
         // Create new user (username is NOT generated, user must set it in onboarding)
         user = await this.usersService.findOrCreateByFirebaseUid(uid, {
@@ -55,6 +57,23 @@ export class AuthService {
         });
       }
     }
+
+    // Check Grace Period for Restoration
+    if (user.isDeleted) {
+      const now = new Date();
+      if (user.deletionGracePeriodUntil && now <= user.deletionGracePeriodUntil) {
+        // Restore account
+        user.isDeleted = false;
+        user.deletedAt = null as any;
+        user.deletionGracePeriodUntil = null as any;
+        user.usernameReservedUntil = null as any;
+        user.originalUsername = null as any;
+      } else {
+        throw new UnauthorizedException('هذا الحساب محذوف نهائياً.');
+      }
+    }
+
+    await user.save();
 
     return this.generateTokens((user._id as any).toString(), user.username);
   }

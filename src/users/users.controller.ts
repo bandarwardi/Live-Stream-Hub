@@ -24,8 +24,8 @@ export class UsersController {
   @Patch('me')
   async updateProfile(@CurrentUser() user: any, @Body() data: any) {
     // We allow updating displayName, bio, username, email
-    // Phone can ONLY be updated via /verify-phone endpoint
-    const allowedFields = ['displayName', 'bio', 'username', 'email'];
+    // Phone and email can ONLY be updated via verification endpoints
+    const allowedFields = ['displayName', 'bio', 'username'];
     const updateData: any = {};
     for (const field of allowedFields) {
       if (data[field] !== undefined) {

@@ -12,15 +12,15 @@ export class UsersService {
   ) {}
 
   async findByEmail(email: string): Promise<User | null> {
-    return this.userModel.findOne({ email }).exec();
+    return this.userModel.findOne({ email, isDeleted: { $ne: true } }).exec();
   }
 
   async findByPhone(phone: string): Promise<User | null> {
-    return this.userModel.findOne({ phone }).exec();
+    return this.userModel.findOne({ phone, isDeleted: { $ne: true } }).exec();
   }
 
   async findByUsername(username: string): Promise<User | null> {
-    return this.userModel.findOne({ username }).exec();
+    return this.userModel.findOne({ username, isDeleted: { $ne: true } }).exec();
   }
 
   async findById(id: string): Promise<User | null> {
@@ -36,6 +36,7 @@ export class UsersService {
           { displayName: { $regex: query, $options: 'i' } },
           { username: { $regex: query, $options: 'i' } },
         ],
+        isDeleted: { $ne: true },
       })
       .limit(20)
       .select('username displayName avatarUrl bio')
@@ -43,6 +44,10 @@ export class UsersService {
   }
 
   async findByFirebaseUid(firebaseUid: string): Promise<User | null> {
+    return this.userModel.findOne({ firebaseUid, isDeleted: { $ne: true } }).exec();
+  }
+
+  async findAnyByFirebaseUid(firebaseUid: string): Promise<User | null> {
     return this.userModel.findOne({ firebaseUid }).exec();
   }
 
@@ -71,6 +76,26 @@ export class UsersService {
       const byEmail = await this.userModel.findOne({
         email: tokenEmail,
         emailVerified: true,
+        isDeleted: { $ne: true },
+      });
+      if (byEmail) return byEmail;
+    }
+    if (tokenPhone) {
+      const byPhone = await this.userModel.findOne({
+        phone: tokenPhone,
+        phoneVerified: true,
+        isDeleted: { $ne: true },
+      });
+      if (byPhone) return byPhone;
+    }
+    return null;
+  }
+
+  async findAnyLinkableAccount(tokenEmail?: string, tokenPhone?: string): Promise<User | null> {
+    if (tokenEmail) {
+      const byEmail = await this.userModel.findOne({
+        email: tokenEmail,
+        emailVerified: true,
       });
       if (byEmail) return byEmail;
     }
@@ -95,6 +120,34 @@ export class UsersService {
       throw err;
     }
   }
+
+  async softDeleteUser(userId: string): Promise<{ success: true }> {
+    const user = await this.userModel.findById(userId);
+    if (!user || user.isDeleted) {
+      throw new NotFoundException('الحساب غير موجود');
+    }
+
+    user.isDeleted = true;
+    user.deletedAt = new Date();
+    
+    // 7 days grace period
+    const graceDate = new Date();
+    graceDate.setDate(graceDate.getDate() + 7);
+    user.deletionGracePeriodUntil = graceDate;
+
+    // 30 days username reservation
+    const reserveDate = new Date();
+    reserveDate.setDate(reserveDate.getDate() + 30);
+    user.usernameReservedUntil = reserveDate;
+    user.originalUsername = user.username;
+
+    // Clear active sessions
+    user.hashedRefreshToken = null as any;
+    user.refreshTokenFamily = null as any;
+    
+    await user.save();
+    return { success: true };
+  }
   async verifyPhoneFromFirebaseToken(userId: string, token: string) {
     try {
       const decodedToken = await this.firebaseService.getAuth().verifyIdToken(token);
@@ -108,6 +161,7 @@ export class UsersService {
       const existingUser = await this.userModel.findOne({ 
         phone: phoneNumber, 
         phoneVerified: true,
+        isDeleted: { $ne: true },
         _id: { $ne: userId }
       });
 

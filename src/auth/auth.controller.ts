@@ -1,4 +1,4 @@
-import { Controller, Post, Put, Body, UseGuards, Get, Req, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Put, Body, UseGuards, Get, Req, HttpCode, HttpStatus, Delete } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -43,5 +43,11 @@ export class AuthController {
     return this.authService.logout(user.userId);
   }
 
-
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  @Delete('account')
+  async deleteAccount(@CurrentUser() user: any) {
+    await this.usersService.softDeleteUser(user.userId);
+    return { success: true, message: 'تم حذف الحساب بنجاح' };
+  }
 }
