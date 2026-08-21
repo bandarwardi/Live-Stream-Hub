@@ -62,4 +62,3 @@ UserSchema.set('toJSON', {
 
 // Indexes
 UserSchema.index({ username: 'text', bio: 'text' });
-UserSchema.index({ firebaseUid: 1 }, { unique: true, sparse: true });
