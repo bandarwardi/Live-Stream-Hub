@@ -21,7 +21,7 @@ export class User extends Document {
   @Prop({ required: false, default: null })
   passwordHash: string;
 
-  @Prop({ required: true, enum: ['local', 'google', 'phone'], default: 'local' })
+  @Prop({ required: true, enum: ['local', 'google', 'phone', 'firebase'], default: 'local' })
   authProvider: string;
 
   @Prop({ unique: true, sparse: true })
