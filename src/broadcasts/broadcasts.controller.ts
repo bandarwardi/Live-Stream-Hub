@@ -24,10 +24,13 @@ export class BroadcastsController {
     // If the requesting user is the broadcaster, they get publisher role
     const role = (broadcast.broadcaster as any)._id.toString() === user.userId ? 'publisher' : 'subscriber';
     
-    // For Agora uid, we can use a generated integer or hash the user string ID to an int.
-    // For simplicity and avoiding collision in small scale, a random integer is used.
-    // In production, you might want a stable mapping or an integer ID field for users.
-    const uid = Math.floor(Math.random() * 100000) + 1;
+    // Generate a deterministic integer uid from user string ID
+    let uid = 0;
+    for (let i = 0; i < user.userId.length; i++) {
+      uid = ((uid << 5) - uid) + user.userId.charCodeAt(i);
+      uid |= 0;
+    }
+    uid = Math.abs(uid) || 1;
 
     const token = this.broadcastsService.generateAgoraToken(broadcast.channelName, uid, role);
     return { token, uid, channelName: broadcast.channelName, role };
