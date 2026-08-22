@@ -39,6 +39,9 @@ export class User extends Document {
   @Prop({ default: null })
   displayName: string;
 
+  @Prop({ default: 0 })
+  coins: number;
+
   @Prop({ default: false })
   isDeleted: boolean;
 

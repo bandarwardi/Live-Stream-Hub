@@ -125,7 +125,7 @@ export class BroadcastsService {
     }
   }
 
-  async findAll(status?: string, category?: string, cursor?: string, limit: number = 20) {
+  async findAll(status?: string, category?: string, broadcasterId?: string, cursor?: string, limit: number = 20) {
     const query: any = {};
     
     if (status === 'live') {
@@ -136,6 +136,10 @@ export class BroadcastsService {
     
     if (category && category !== 'All') {
       query.category = category;
+    }
+
+    if (broadcasterId) {
+      query.broadcaster = broadcasterId;
     }
 
     if (cursor) {

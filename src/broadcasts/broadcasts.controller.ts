@@ -50,11 +50,12 @@ export class BroadcastsController {
   async getBroadcasts(
     @Query('status') status?: string,
     @Query('category') category?: string,
+    @Query('broadcasterId') broadcasterId?: string,
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
   ) {
     const parsedLimit = limit ? parseInt(limit, 10) : 20;
-    return this.broadcastsService.findAll(status, category, cursor, parsedLimit);
+    return this.broadcastsService.findAll(status, category, broadcasterId, cursor, parsedLimit);
   }
 
   @Get('search')

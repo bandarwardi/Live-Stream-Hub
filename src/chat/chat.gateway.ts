@@ -178,6 +178,69 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('sendGift')
+  async handleSendGift(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('broadcastId') broadcastId: string,
+    @MessageBody('gift') gift: { id: string; name: string; price: number; icon: string; animationUrl?: string },
+  ) {
+    try {
+      const user = client.data.user;
+      
+      // Deduct coins from sender
+      const hasEnoughCoins = await this.usersService.deductCoins(user.userId, gift.price);
+      if (!hasEnoughCoins) {
+        client.emit('error', 'رصيدك غير كافٍ لإرسال هذه الهدية');
+        return { status: 'error', message: 'Insufficient coins' };
+      }
+
+      // Add coins to broadcaster
+      const broadcast = await this.broadcastsService.findById(broadcastId);
+      if (broadcast && broadcast.broadcaster) {
+        const broadcasterId = (broadcast.broadcaster as any)._id || broadcast.broadcaster;
+        await this.usersService.addCoins(broadcasterId.toString(), gift.price);
+      }
+      
+      // Emit gift event to everyone in the room (including the sender, so they see the animation)
+      this.server.to(broadcastId).emit('giftReceived', {
+        sender: user,
+        gift,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Optionally send a system message to chat
+      const giftMessage = {
+        _id: `gift-${Date.now()}-${client.id}`,
+        sender: user,
+        text: `Sent a ${gift.name} ${gift.icon}`,
+        type: 'gift',
+        gift,
+        createdAt: new Date().toISOString(),
+      };
+      this.server.to(broadcastId).emit('newMessage', giftMessage);
+
+      return { status: 'sent' };
+    } catch (error) {
+      this.logger.error(`Send gift failed: ${error.message}`);
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('sendReaction')
+  async handleSendReaction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('broadcastId') broadcastId: string,
+  ) {
+    // We don't need strict validation here to keep reactions fast
+    // We can just emit to the room (excluding sender, or including sender - usually excluding to let local UI handle its own)
+    client.to(broadcastId).emit('reactionReceived', {
+      senderId: client.data.user?.userId,
+      timestamp: Date.now(),
+    });
+  }
+
   private updateViewerCount(broadcastId: string) {
     const room = this.server.sockets.adapter.rooms.get(broadcastId);
     const viewerCount = room ? room.size : 0;

@@ -90,6 +90,13 @@ export class UsersController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('follow/:id/status')
+  async checkFollowStatus(@CurrentUser() user: any, @Param('id') id: string) {
+    const isFollowing = await this.followsService.isFollowing(user.userId, id);
+    return { isFollowing };
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete('follow/:id')
   async unfollowUser(@CurrentUser() user: any, @Param('id') id: string) {
     await this.followsService.unfollow(user.userId, id);

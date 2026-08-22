@@ -184,4 +184,17 @@ export class UsersService {
       throw new BadRequestException('فشل التحقق من الرمز مع Firebase');
     }
   }
+
+  async deductCoins(userId: string, amount: number): Promise<boolean> {
+    const result = await this.userModel.findOneAndUpdate(
+      { _id: userId, coins: { $gte: amount } },
+      { $inc: { coins: -amount } },
+      { new: true }
+    ).exec();
+    return !!result;
+  }
+
+  async addCoins(userId: string, amount: number): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, { $inc: { coins: amount } }).exec();
+  }
 }
