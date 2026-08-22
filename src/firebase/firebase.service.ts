@@ -19,7 +19,22 @@ export class FirebaseService implements OnModuleInit {
     }
 
     try {
-      const serviceAccount = JSON.parse(serviceAccountKeyString);
+      let serviceAccount;
+      if (serviceAccountKeyString.trim().startsWith('{')) {
+        serviceAccount = JSON.parse(serviceAccountKeyString);
+      } else if (serviceAccountKeyString.trim().startsWith('"')) {
+        // Handle double escaped JSON string
+        const unescaped = serviceAccountKeyString
+          .replace(/^"|"$/g, '')          // Remove surrounding quotes
+          .replace(/\\"/g, '"')           // Unescape quotes
+          .replace(/\\\\n/g, '\\n')       // Fix double escaped newlines
+          .replace(/(?<!\\)\\n/g, '\\n'); // Ensure single escaped newlines become valid JSON newlines
+        serviceAccount = JSON.parse(unescaped);
+      } else {
+        // Base64 fallback (industry standard for Firebase keys in .env)
+        const decoded = Buffer.from(serviceAccountKeyString, 'base64').toString('utf8');
+        serviceAccount = JSON.parse(decoded);
+      }
       
       // Prevent initializing multiple times if module is reloaded
       if (!getApps().length) {
