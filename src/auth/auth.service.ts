@@ -31,10 +31,6 @@ export class AuthService {
       user = await this.usersService.findAnyLinkableAccount(email, phone_number);
 
       if (user) {
-        if (user.firebaseUid && user.firebaseUid !== uid) {
-          throw new UnauthorizedException('هذا البريد أو الرقم مربوط بحساب آخر.');
-        }
-
         user.firebaseUid = uid;
         if (picture && !user.avatarUrl) user.avatarUrl = picture;
         if (email && !user.email) {
