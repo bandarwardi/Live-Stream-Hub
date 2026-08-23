@@ -20,11 +20,16 @@ export class FirebaseService implements OnModuleInit {
 
     try {
       let serviceAccount;
-      if (serviceAccountKeyString.trim().startsWith('{')) {
-        serviceAccount = JSON.parse(serviceAccountKeyString);
-      } else if (serviceAccountKeyString.trim().startsWith('"')) {
+      let cleanedKey = serviceAccountKeyString.trim();
+      if (cleanedKey.startsWith("'") && cleanedKey.endsWith("'")) {
+        cleanedKey = cleanedKey.slice(1, -1);
+      }
+      if (cleanedKey.startsWith('{')) {
+        serviceAccount = JSON.parse(cleanedKey);
+      } else if (cleanedKey.startsWith('"')) {
         // Handle double escaped JSON string
-        const unescaped = serviceAccountKeyString
+        const unescaped = cleanedKey
+
           .replace(/^"|"$/g, '')          // Remove surrounding quotes
           .replace(/\\"/g, '"')           // Unescape quotes
           .replace(/\\\\n/g, '\\n')       // Fix double escaped newlines
@@ -32,7 +37,7 @@ export class FirebaseService implements OnModuleInit {
         serviceAccount = JSON.parse(unescaped);
       } else {
         // Base64 fallback (industry standard for Firebase keys in .env)
-        const decoded = Buffer.from(serviceAccountKeyString, 'base64').toString('utf8');
+        const decoded = Buffer.from(cleanedKey, 'base64').toString('utf8');
         serviceAccount = JSON.parse(decoded);
       }
       
