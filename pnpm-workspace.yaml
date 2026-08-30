@@ -1,6 +1,9 @@
 packages:
   - '.'
 
+overrides:
+  jose: 4.15.9
+
 allowBuilds:
   '@firebase/util': true
   bcrypt: true
