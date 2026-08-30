@@ -21,7 +21,11 @@ export class User extends Document {
   @Prop({ required: false, default: null })
   passwordHash: string;
 
-  @Prop({ required: true, enum: ['local', 'google', 'phone', 'firebase'], default: 'local' })
+  @Prop({
+    required: true,
+    enum: ['local', 'google', 'phone', 'firebase'],
+    default: 'local',
+  })
   authProvider: string;
 
   @Prop({ unique: true, sparse: true })
@@ -57,13 +61,29 @@ export class User extends Document {
   @Prop({ default: null })
   originalUsername: string;
 
+  @Prop({ default: null })
+  gender: string;
 
+  @Prop({ default: null })
+  birthdate: Date;
+
+  @Prop({ default: false })
+  isProfileComplete: boolean;
   // Used for tracking the family of refresh tokens for reuse detection
   @Prop({ default: null })
   refreshTokenFamily: string;
 
   @Prop({ default: null })
   hashedRefreshToken: string;
+
+  @Prop({ default: null })
+  pushToken: string;
+
+  @Prop({ default: false })
+  isOnline: boolean;
+
+  @Prop({ default: null })
+  lastSeen: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

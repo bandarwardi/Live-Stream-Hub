@@ -1,4 +1,10 @@
-import { Injectable, ConflictException, ForbiddenException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  ForbiddenException,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Broadcast } from './schemas/broadcast.schema';
@@ -9,13 +15,26 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
-export class BroadcastsService {
+export class BroadcastsService implements OnModuleInit {
   private readonly logger = new Logger(BroadcastsService.name);
+
+  public onZombieCleanup?: (broadcastIds: string[]) => void;
 
   constructor(
     @InjectModel(Broadcast.name) private broadcastModel: Model<Broadcast>,
     private configService: ConfigService,
   ) {}
+
+  async onModuleInit() {
+    const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
+    await this.broadcastModel.updateMany(
+      {
+        status: 'disconnected',
+        disconnectedAt: { $lt: threeMinutesAgo },
+      },
+      { status: 'ended', isLive: false },
+    );
+  }
 
   async create(userId: string, dto: CreateBroadcastDto) {
     const existingLive = await this.broadcastModel.findOne({
@@ -57,25 +76,55 @@ export class BroadcastsService {
     await broadcast.save();
   }
 
-  async endBroadcast(broadcastId: string, userId: string) {
+  async endBroadcast(broadcastId: string, userId?: string) {
     const broadcast = await this.broadcastModel.findById(broadcastId);
     if (!broadcast) {
       throw new ConflictException('Broadcast not found');
     }
 
-    if (broadcast.broadcaster.toString() !== userId) {
-      throw new ForbiddenException('Only the broadcaster can end the broadcast');
+    if (userId && broadcast.broadcaster.toString() !== userId) {
+      throw new ForbiddenException(
+        'Only the broadcaster can end the broadcast',
+      );
     }
 
     broadcast.isLive = false;
+    broadcast.status = 'ended';
     broadcast.endedAt = new Date();
     return broadcast.save();
   }
 
-  generateAgoraToken(channelName: string, uid: number, role: 'publisher' | 'subscriber') {
+  async markDisconnected(broadcastId: string) {
+    return this.broadcastModel.findByIdAndUpdate(broadcastId, {
+      status: 'disconnected',
+      disconnectedAt: new Date(),
+    });
+  }
+
+  async updateStatus(
+    broadcastId: string,
+    status: 'live' | 'disconnected' | 'ended',
+  ) {
+    return this.broadcastModel.findByIdAndUpdate(broadcastId, { status });
+  }
+
+  async findActiveBroadcastForUser(userId: string) {
+    return this.broadcastModel.findOne({
+      broadcaster: userId,
+      status: { $in: ['live', 'disconnected'] },
+    });
+  }
+
+  generateAgoraToken(
+    channelName: string,
+    uid: number,
+    role: 'publisher' | 'subscriber',
+  ) {
     const appId = this.configService.get<string>('AGORA_APP_ID');
-    const appCertificate = this.configService.get<string>('AGORA_APP_CERTIFICATE');
-    
+    const appCertificate = this.configService.get<string>(
+      'AGORA_APP_CERTIFICATE',
+    );
+
     if (!appId || !appCertificate) {
       throw new Error('Agora credentials are not configured');
     }
@@ -84,7 +133,8 @@ export class BroadcastsService {
     const currentTimestamp = Math.floor(Date.now() / 1000);
     const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
 
-    const tokenRole = role === 'publisher' ? RtcRole.PUBLISHER : RtcRole.SUBSCRIBER;
+    const tokenRole =
+      role === 'publisher' ? RtcRole.PUBLISHER : RtcRole.SUBSCRIBER;
 
     return RtcTokenBuilder.buildTokenWithUid(
       appId,
@@ -93,14 +143,14 @@ export class BroadcastsService {
       uid,
       tokenRole,
       expirationTimeInSeconds,
-      privilegeExpiredTs
+      privilegeExpiredTs,
     );
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
   async cleanupZombieBroadcasts() {
     const ninetySecondsAgo = new Date(Date.now() - 90 * 1000);
-    
+
     const zombies = await this.broadcastModel.find({
       isLive: true,
       lastHeartbeat: { $lt: ninetySecondsAgo },
@@ -108,32 +158,44 @@ export class BroadcastsService {
 
     if (zombies.length > 0) {
       this.logger.log(`Cleaning up ${zombies.length} zombie broadcasts`);
-      
-      const bulkOps = zombies.map(zombie => ({
+
+      const bulkOps = zombies.map((zombie) => ({
         updateOne: {
           filter: { _id: zombie._id },
           update: {
             $set: {
               isLive: false,
+              status: 'ended',
               endedAt: new Date(),
             },
           },
-        }
+        },
       }));
 
       await this.broadcastModel.bulkWrite(bulkOps);
+
+      if (this.onZombieCleanup) {
+        this.onZombieCleanup(zombies.map((z) => z._id.toString()));
+      }
     }
   }
 
-  async findAll(status?: string, category?: string, broadcasterId?: string, cursor?: string, limit: number = 20) {
+  async findAll(
+    status?: string,
+    category?: string,
+    broadcasterId?: string,
+    cursor?: string,
+    limit: number = 20,
+  ) {
     const query: any = {};
-    
+
     if (status === 'live') {
       query.isLive = true;
+      query.status = { $ne: 'ended' };
     } else if (status === 'ended') {
       query.isLive = false;
     }
-    
+
     if (category && category !== 'All') {
       query.category = category;
     }

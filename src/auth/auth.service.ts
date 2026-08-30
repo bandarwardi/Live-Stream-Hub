@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -16,9 +20,14 @@ export class AuthService {
   async firebaseLogin(idToken: string) {
     let decodedToken;
     try {
-      decodedToken = await this.firebaseService.getAuth().verifyIdToken(idToken);
-    } catch (error) {
-      throw new UnauthorizedException('Invalid Firebase token');
+      decodedToken = await this.firebaseService
+        .getAuth()
+        .verifyIdToken(idToken);
+    } catch (error: any) {
+      console.error('Firebase token verification failed:', error);
+      throw new UnauthorizedException(
+        `Invalid Firebase token: ${error.message}`,
+      );
     }
 
     const { uid, email, name, picture, phone_number } = decodedToken;
@@ -28,11 +37,15 @@ export class AuthService {
 
     if (!user) {
       // Try to link account (including deleted)
-      user = await this.usersService.findAnyLinkableAccount(email, phone_number);
+      user = await this.usersService.findAnyLinkableAccount(
+        email,
+        phone_number,
+      );
 
       if (user) {
         user.firebaseUid = uid;
         if (picture && !user.avatarUrl) user.avatarUrl = picture;
+        if (name && !user.displayName) user.displayName = name;
         if (email && !user.email) {
           user.email = email;
           user.emailVerified = true;
@@ -50,6 +63,7 @@ export class AuthService {
           phoneVerified: !!phone_number,
           authProvider: 'firebase',
           avatarUrl: picture || null,
+          displayName: name || null,
         });
       }
     }
@@ -57,7 +71,10 @@ export class AuthService {
     // Check Grace Period for Restoration
     if (user.isDeleted) {
       const now = new Date();
-      if (user.deletionGracePeriodUntil && now <= user.deletionGracePeriodUntil) {
+      if (
+        user.deletionGracePeriodUntil &&
+        now <= user.deletionGracePeriodUntil
+      ) {
         // Restore account
         user.isDeleted = false;
         user.deletedAt = null as any;
@@ -91,7 +108,9 @@ export class AuthService {
       // Reuse detected! The family matches but the token itself does not match the active one.
       // Action: Invalidate the entire family (revoke all sessions)
       await this.usersService.updateRefreshTokenFamily(userId, null, null);
-      throw new UnauthorizedException('Token reuse detected. Sessions revoked.');
+      throw new UnauthorizedException(
+        'Token reuse detected. Sessions revoked.',
+      );
     }
 
     // Valid token. Rotate it.
@@ -103,25 +122,33 @@ export class AuthService {
     return { success: true };
   }
 
-  private async generateTokens(userId: string, username: string, existingFamily?: string) {
+  private async generateTokens(
+    userId: string,
+    username: string,
+    existingFamily?: string,
+  ) {
     const payload = { sub: userId, username };
-    
+
     const accessToken = this.jwtService.sign(payload, { expiresIn: '15m' });
-    
+
     const family = existingFamily || randomUUID();
     const refreshPayload = { ...payload, family, nonce: randomUUID() };
-    
+
     // Refresh token lives for 30 days but is signed with a different secret
     // Note: We use the refresh secret configured in the module
-    const refreshToken = this.jwtService.sign(refreshPayload, { 
+    const refreshToken = this.jwtService.sign(refreshPayload, {
       expiresIn: '30d',
-      secret: process.env.JWT_REFRESH_SECRET 
+      secret: process.env.JWT_REFRESH_SECRET,
     });
 
     const salt = await bcrypt.genSalt(10);
     const hashedToken = await bcrypt.hash(refreshToken, salt);
 
-    await this.usersService.updateRefreshTokenFamily(userId, family, hashedToken);
+    await this.usersService.updateRefreshTokenFamily(
+      userId,
+      family,
+      hashedToken,
+    );
 
     return {
       accessToken,

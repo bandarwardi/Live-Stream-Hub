@@ -1,4 +1,9 @@
-import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { WsException } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
@@ -18,14 +23,18 @@ export class WsJwtGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     try {
       const client: Socket = context.switchToWs().getClient<Socket>();
-      const authHeader = client.handshake.auth?.token || client.handshake.headers?.authorization;
-      
+      const authHeader =
+        client.handshake.auth?.token || client.handshake.headers?.authorization;
+
       if (!authHeader) {
         throw new WsException('Unauthorized: Missing token');
       }
 
       // Format could be "Bearer <token>" or just "<token>"
-      const token = authHeader.split(' ').length === 2 ? authHeader.split(' ')[1] : authHeader;
+      const token =
+        authHeader.split(' ').length === 2
+          ? authHeader.split(' ')[1]
+          : authHeader;
 
       const secret = this.configService.get<string>('JWT_ACCESS_SECRET');
       const payload = this.jwtService.verify(token, { secret });
@@ -37,7 +46,11 @@ export class WsJwtGuard implements CanActivate {
       }
 
       // Attach user to socket data for easy access later
-      client.data.user = { userId: payload.sub, username: user.username, displayName: user.displayName };
+      client.data.user = {
+        userId: payload.sub,
+        username: user.username,
+        displayName: user.displayName,
+      };
 
       return true;
     } catch (err) {

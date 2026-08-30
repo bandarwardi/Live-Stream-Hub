@@ -9,7 +9,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.use(helmet());
-  
+
   const configService = app.get(ConfigService);
   const corsOrigins = configService.get<string>('CORS_ORIGINS');
   let origins: string | string[] = '*';
@@ -32,6 +32,6 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
 
   const port = configService.get<number>('PORT') || 3000;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
 }
 bootstrap();

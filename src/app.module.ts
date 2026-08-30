@@ -10,6 +10,8 @@ import { FirebaseModule } from './firebase/firebase.module';
 import { CategoriesModule } from './categories/categories.module';
 import { BroadcastsModule } from './broadcasts/broadcasts.module';
 import { ChatModule } from './chat/chat.module';
+import { CallsModule } from './calls/calls.module';
+import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
@@ -24,19 +26,22 @@ import { ChatModule } from './chat/chat.module';
       }),
       inject: [ConfigService],
     }),
-    ThrottlerModule.forRoot([{
-      ttl: 60000,
-      limit: 10,
-    }]),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 10,
+      },
+    ]),
     FirebaseModule,
     UsersModule,
     AuthModule,
     CategoriesModule,
     BroadcastsModule,
     ChatModule,
+    CallsModule,
+    StorageModule,
   ],
   controllers: [HealthController],
   providers: [],
 })
 export class AppModule {}
-

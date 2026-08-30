@@ -1,4 +1,15 @@
-import { Controller, Post, Put, Body, UseGuards, Get, Req, HttpCode, HttpStatus, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Put,
+  Body,
+  UseGuards,
+  Get,
+  Req,
+  HttpCode,
+  HttpStatus,
+  Delete,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -33,7 +44,11 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @Post('refresh')
   refresh(@Req() req: any) {
-    return this.authService.refresh(req.user.sub, req.user.refreshToken, req.user.family);
+    return this.authService.refresh(
+      req.user.sub,
+      req.user.refreshToken,
+      req.user.family,
+    );
   }
 
   @UseGuards(JwtAuthGuard)

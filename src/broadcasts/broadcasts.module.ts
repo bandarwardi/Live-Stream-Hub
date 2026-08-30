@@ -6,7 +6,9 @@ import { BroadcastsController } from './broadcasts.controller';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Broadcast.name, schema: BroadcastSchema }]),
+    MongooseModule.forFeature([
+      { name: Broadcast.name, schema: BroadcastSchema },
+    ]),
   ],
   controllers: [BroadcastsController],
   providers: [BroadcastsService],

@@ -1,20 +1,26 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { initializeApp, cert, getApps, getApp, App } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { getMessaging } from 'firebase-admin/messaging';
 
 @Injectable()
 export class FirebaseService implements OnModuleInit {
   private firebaseApp: App;
+  private readonly logger = new Logger(FirebaseService.name);
 
   constructor(private configService: ConfigService) {}
 
   onModuleInit() {
     const projectId = this.configService.get<string>('FIREBASE_PROJECT_ID');
-    const serviceAccountKeyString = this.configService.get<string>('FIREBASE_SERVICE_ACCOUNT_KEY');
+    const serviceAccountKeyString = this.configService.get<string>(
+      'FIREBASE_SERVICE_ACCOUNT_KEY',
+    );
 
     if (!projectId || !serviceAccountKeyString) {
-      console.warn('Firebase credentials not found. Firebase Admin SDK will not be initialized.');
+      console.warn(
+        'Firebase credentials not found. Firebase Admin SDK will not be initialized.',
+      );
       return;
     }
 
@@ -30,9 +36,9 @@ export class FirebaseService implements OnModuleInit {
         // Handle double escaped JSON string
         const unescaped = cleanedKey
 
-          .replace(/^"|"$/g, '')          // Remove surrounding quotes
-          .replace(/\\"/g, '"')           // Unescape quotes
-          .replace(/\\\\n/g, '\\n')       // Fix double escaped newlines
+          .replace(/^"|"$/g, '') // Remove surrounding quotes
+          .replace(/\\"/g, '"') // Unescape quotes
+          .replace(/\\\\n/g, '\\n') // Fix double escaped newlines
           .replace(/(?<!\\)\\n/g, '\\n'); // Ensure single escaped newlines become valid JSON newlines
         serviceAccount = JSON.parse(unescaped);
       } else {
@@ -40,7 +46,7 @@ export class FirebaseService implements OnModuleInit {
         const decoded = Buffer.from(cleanedKey, 'base64').toString('utf8');
         serviceAccount = JSON.parse(decoded);
       }
-      
+
       // Prevent initializing multiple times if module is reloaded
       if (!getApps().length) {
         this.firebaseApp = initializeApp({
@@ -58,5 +64,27 @@ export class FirebaseService implements OnModuleInit {
 
   getAuth() {
     return getAuth(this.firebaseApp);
+  }
+
+  getMessaging() {
+    return getMessaging(this.firebaseApp);
+  }
+
+  async sendPushNotification(
+    token: string,
+    title: string,
+    body: string,
+    data?: any,
+  ) {
+    if (!this.firebaseApp) return;
+    try {
+      await this.getMessaging().send({
+        token,
+        notification: { title, body },
+        data: data || {},
+      });
+    } catch (error) {
+      this.logger.error('Error sending push notification:', error);
+    }
   }
 }

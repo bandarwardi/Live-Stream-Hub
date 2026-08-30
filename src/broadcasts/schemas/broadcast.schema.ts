@@ -21,6 +21,16 @@ export class Broadcast extends Document {
   @Prop({ default: true })
   isLive: boolean;
 
+  @Prop({
+    type: String,
+    enum: ['live', 'disconnected', 'ended'],
+    default: 'live',
+  })
+  status: string;
+
+  @Prop({ default: null })
+  disconnectedAt: Date;
+
   @Prop({ default: 0 })
   viewerCount: number;
 

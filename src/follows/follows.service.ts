@@ -11,7 +11,7 @@ export class FollowsService {
     if (followerId === followingId) {
       throw new ConflictException('You cannot follow yourself');
     }
-    
+
     try {
       await this.followModel.create({
         follower: followerId,
@@ -27,10 +27,12 @@ export class FollowsService {
   }
 
   async unfollow(followerId: string, followingId: string): Promise<void> {
-    await this.followModel.deleteOne({
-      follower: followerId,
-      following: followingId,
-    }).exec();
+    await this.followModel
+      .deleteOne({
+        follower: followerId,
+        following: followingId,
+      })
+      .exec();
   }
 
   async isFollowing(followerId: string, followingId: string): Promise<boolean> {
@@ -47,8 +49,8 @@ export class FollowsService {
       .find({ following: userId })
       .populate('follower', 'username displayName avatarUrl bio')
       .exec();
-    
-    return follows.map(f => f.follower);
+
+    return follows.map((f) => f.follower);
   }
 
   async getFollowing(userId: string) {
@@ -56,8 +58,8 @@ export class FollowsService {
       .find({ follower: userId })
       .populate('following', 'username displayName avatarUrl bio')
       .exec();
-      
-    return follows.map(f => f.following);
+
+    return follows.map((f) => f.following);
   }
 
   async getFollowersCount(userId: string): Promise<number> {

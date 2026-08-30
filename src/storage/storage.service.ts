@@ -1,7 +1,14 @@
-import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
-import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import {
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
 import { v4 as uuidv4 } from 'uuid';
-import { Readable } from 'stream';
 
 @Injectable()
 export class StorageService {
@@ -25,7 +32,7 @@ export class StorageService {
     if (!this.bucketName) {
       throw new Error('S3_BUCKET is not configured.');
     }
-    
+
     const ext = file.originalname.split('.').pop() || 'jpg';
     const filename = `${folder}/${uuidv4()}.${ext}`;
 
@@ -46,7 +53,9 @@ export class StorageService {
     }
   }
 
-  async getFile(key: string): Promise<{ buffer: Uint8Array, contentType: string }> {
+  async getFile(
+    key: string,
+  ): Promise<{ buffer: Uint8Array; contentType: string }> {
     const command = new GetObjectCommand({
       Bucket: this.bucketName,
       Key: key,

@@ -5,12 +5,27 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { Message, MessageSchema } from './schemas/message.schema';
 import { ChatService } from './chat.service';
 import { ChatGateway } from './chat.gateway';
+import {
+  Conversation,
+  ConversationSchema,
+} from './schemas/conversation.schema';
+import {
+  DirectMessage,
+  DirectMessageSchema,
+} from './schemas/direct-message.schema';
+import { ConversationsService } from './conversations.service';
+import { ConversationsController } from './conversations.controller';
 import { BroadcastsModule } from '../broadcasts/broadcasts.module';
 import { UsersModule } from '../users/users.module';
+import { FirebaseModule } from '../firebase/firebase.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Message.name, schema: MessageSchema }]),
+    MongooseModule.forFeature([
+      { name: Message.name, schema: MessageSchema },
+      { name: Conversation.name, schema: ConversationSchema },
+      { name: DirectMessage.name, schema: DirectMessageSchema },
+    ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -20,8 +35,10 @@ import { UsersModule } from '../users/users.module';
     }),
     BroadcastsModule,
     UsersModule,
+    FirebaseModule,
   ],
-  providers: [ChatService, ChatGateway],
-  exports: [ChatService],
+  controllers: [ConversationsController],
+  providers: [ChatService, ChatGateway, ConversationsService],
+  exports: [ChatService, ConversationsService, ChatGateway],
 })
 export class ChatModule {}

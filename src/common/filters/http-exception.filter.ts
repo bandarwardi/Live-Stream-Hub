@@ -26,7 +26,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     const message =
       typeof errorResponse === 'object' && errorResponse !== null
-        ? (errorResponse as any).message || (errorResponse as any).error || 'Internal server error'
+        ? (errorResponse as any).message ||
+          (errorResponse as any).error ||
+          'Internal server error'
         : errorResponse;
 
     const error =

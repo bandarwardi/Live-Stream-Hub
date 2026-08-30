@@ -1,4 +1,15 @@
-import { Controller, Get, Param, Query, NotFoundException, Post, Patch, Body, UseGuards, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  NotFoundException,
+  Post,
+  Patch,
+  Body,
+  UseGuards,
+  BadRequestException,
+} from '@nestjs/common';
 import { BroadcastsService } from './broadcasts.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -9,8 +20,17 @@ export class BroadcastsController {
   constructor(private readonly broadcastsService: BroadcastsService) {}
 
   @UseGuards(JwtAuthGuard)
+  @Get('my-active')
+  async getMyActiveBroadcast(@CurrentUser() user: any) {
+    return this.broadcastsService.findActiveBroadcastForUser(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post()
-  async createBroadcast(@CurrentUser() user: any, @Body() dto: CreateBroadcastDto) {
+  async createBroadcast(
+    @CurrentUser() user: any,
+    @Body() dto: CreateBroadcastDto,
+  ) {
     return this.broadcastsService.create(user.userId, dto);
   }
 
@@ -19,20 +39,28 @@ export class BroadcastsController {
   async getAgoraToken(@CurrentUser() user: any, @Param('id') id: string) {
     const broadcast = await this.broadcastsService.findById(id);
     if (!broadcast) throw new NotFoundException('Broadcast not found');
-    if (!broadcast.isLive) throw new BadRequestException('Broadcast is no longer live');
+    if (!broadcast.isLive)
+      throw new BadRequestException('Broadcast is no longer live');
 
     // If the requesting user is the broadcaster, they get publisher role
-    const role = (broadcast.broadcaster as any)._id.toString() === user.userId ? 'publisher' : 'subscriber';
-    
+    const role =
+      (broadcast.broadcaster as any)._id.toString() === user.userId
+        ? 'publisher'
+        : 'subscriber';
+
     // Generate a deterministic integer uid from user string ID
     let uid = 0;
     for (let i = 0; i < user.userId.length; i++) {
-      uid = ((uid << 5) - uid) + user.userId.charCodeAt(i);
+      uid = (uid << 5) - uid + user.userId.charCodeAt(i);
       uid |= 0;
     }
     uid = Math.abs(uid) || 1;
 
-    const token = this.broadcastsService.generateAgoraToken(broadcast.channelName, uid, role);
+    const token = this.broadcastsService.generateAgoraToken(
+      broadcast.channelName,
+      uid,
+      role,
+    );
     return { token, uid, channelName: broadcast.channelName, role };
   }
 
@@ -58,7 +86,13 @@ export class BroadcastsController {
     @Query('limit') limit?: string,
   ) {
     const parsedLimit = limit ? parseInt(limit, 10) : 20;
-    return this.broadcastsService.findAll(status, category, broadcasterId, cursor, parsedLimit);
+    return this.broadcastsService.findAll(
+      status,
+      category,
+      broadcasterId,
+      cursor,
+      parsedLimit,
+    );
   }
 
   @Get('search')

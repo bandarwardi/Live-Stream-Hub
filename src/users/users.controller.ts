@@ -1,4 +1,19 @@
-import { Controller, Get, Patch, Body, UseGuards, UseInterceptors, UploadedFile, Post, BadRequestException, Query, Param, Delete, NotFoundException, Request } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Patch,
+  Body,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  Post,
+  BadRequestException,
+  Query,
+  Param,
+  Delete,
+  NotFoundException,
+  Request,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
 import { FollowsService } from '../follows/follows.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,14 +47,27 @@ export class UsersController {
         updateData[field] = data[field];
       }
     }
-    
+
     return this.usersService.updateProfile(user.userId, updateData);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('push-token')
+  async updatePushToken(
+    @CurrentUser() user: any,
+    @Body('token') pushToken: string,
+  ) {
+    if (!pushToken) throw new BadRequestException('Push token is required');
+    return this.usersService.updateProfile(user.userId, { pushToken });
   }
 
   @UseGuards(JwtAuthGuard)
   @Post('me/avatar')
   @UseInterceptors(FileInterceptor('file'))
-  async uploadAvatar(@CurrentUser() user: any, @UploadedFile() file: Express.Multer.File) {
+  async uploadAvatar(
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
@@ -50,7 +78,10 @@ export class UsersController {
   @UseGuards(JwtAuthGuard)
   @Post('me/cover')
   @UseInterceptors(FileInterceptor('file'))
-  async uploadCover(@CurrentUser() user: any, @UploadedFile() file: Express.Multer.File) {
+  async uploadCover(
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
     if (!file) {
       throw new BadRequestException('No file uploaded');
     }
@@ -74,10 +105,10 @@ export class UsersController {
   async getUserProfile(@Param('id') id: string) {
     const user = await this.usersService.findById(id);
     if (!user) throw new NotFoundException('User not found');
-    
+
     const followerCount = await this.followsService.getFollowersCount(id);
     const followingCount = await this.followsService.getFollowingCount(id);
-    
+
     const userObj = user.toJSON();
     return { ...userObj, followerCount, followingCount };
   }

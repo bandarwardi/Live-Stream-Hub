@@ -6,7 +6,9 @@ import { seedCategories } from './seeds/categories.seed';
 
 @Injectable()
 export class CategoriesService implements OnModuleInit {
-  constructor(@InjectModel(Category.name) private categoryModel: Model<Category>) {}
+  constructor(
+    @InjectModel(Category.name) private categoryModel: Model<Category>,
+  ) {}
 
   async onModuleInit() {
     await this.seed();
@@ -21,7 +23,9 @@ export class CategoriesService implements OnModuleInit {
   }
 
   async update(id: string, data: Partial<Category>) {
-    return this.categoryModel.findByIdAndUpdate(id, data, { new: true }).exec();
+    return this.categoryModel
+      .findByIdAndUpdate(id, data, { returnDocument: 'after' })
+      .exec();
   }
 
   async delete(id: string) {

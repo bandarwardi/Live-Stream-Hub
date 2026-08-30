@@ -3,7 +3,11 @@ import { Document, Schema as MongooseSchema } from 'mongoose';
 
 @Schema({ timestamps: true })
 export class Message extends Document {
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Broadcast', required: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Broadcast',
+    required: true,
+  })
   broadcast: string;
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
@@ -12,7 +16,11 @@ export class Message extends Document {
   @Prop({ required: true, maxlength: 500 })
   text: string;
 
-  @Prop({ required: true, enum: ['message', 'system', 'gift'], default: 'message' })
+  @Prop({
+    required: true,
+    enum: ['message', 'system', 'gift'],
+    default: 'message',
+  })
   type: string;
 
   // Timestamps will auto-add createdAt and updatedAt
