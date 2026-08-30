@@ -129,9 +129,7 @@ export class BroadcastsService implements OnModuleInit {
       throw new Error('Agora credentials are not configured');
     }
 
-    const expirationTimeInSeconds = 3600; // 1 hour
-    const currentTimestamp = Math.floor(Date.now() / 1000);
-    const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+    const expireSeconds = 3600; // 1 hour from now
 
     const tokenRole =
       role === 'publisher' ? RtcRole.PUBLISHER : RtcRole.SUBSCRIBER;
@@ -142,8 +140,8 @@ export class BroadcastsService implements OnModuleInit {
       channelName,
       uid,
       tokenRole,
-      expirationTimeInSeconds,
-      privilegeExpiredTs,
+      expireSeconds,
+      expireSeconds,
     );
   }
 

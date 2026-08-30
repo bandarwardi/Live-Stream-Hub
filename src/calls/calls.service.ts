@@ -3,10 +3,11 @@ import {
   NotFoundException,
   ConflictException,
   ForbiddenException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Call } from './schemas/call.schema';
 import { v4 as uuidv4 } from 'uuid';
 import { BroadcastsService } from '../broadcasts/broadcasts.service'; // To reuse generateAgoraToken
@@ -29,12 +30,16 @@ export class CallsService {
     calleeId: string,
     type: 'voice' | 'video',
   ): Promise<Call> {
+    if (!Types.ObjectId.isValid(callerId) || !Types.ObjectId.isValid(calleeId)) {
+      throw new BadRequestException('Invalid caller or callee ID');
+    }
+
     if (callerId === calleeId) {
       throw new ConflictException('You cannot call yourself');
     }
 
-    // Optional: Check if either user is already in an active call
-    const existingCall = await this.callModel.findOne({
+    // Check if either user is already in an active/ringing call
+    const existingCalls = await this.callModel.find({
       $or: [
         { caller: callerId },
         { callee: callerId },
@@ -44,7 +49,23 @@ export class CallsService {
       status: { $in: ['ringing', 'active'] },
     });
 
-    if (existingCall) {
+    const now = Date.now();
+    for (const ec of existingCalls) {
+      // If a call has been ringing for more than 45s without answer, auto-end it
+      if (ec.status === 'ringing' && now - new Date((ec as any).createdAt).getTime() > 45000) {
+        ec.status = 'ended';
+        ec.endedAt = new Date();
+        await ec.save();
+      }
+    }
+
+    const stillActive = existingCalls.some(
+      (c) =>
+        c.status === 'active' ||
+        (c.status === 'ringing' && now - new Date((c as any).createdAt).getTime() <= 45000),
+    );
+
+    if (stillActive) {
       throw new ConflictException('User is already in a call');
     }
 
@@ -67,6 +88,10 @@ export class CallsService {
   }
 
   async answerCall(callId: string, userId: string): Promise<Call> {
+    if (!Types.ObjectId.isValid(callId)) {
+      throw new BadRequestException('Invalid call ID');
+    }
+
     const call = await this.callModel.findById(callId);
     if (!call) throw new NotFoundException('Call not found');
 
@@ -91,6 +116,10 @@ export class CallsService {
   }
 
   async rejectCall(callId: string, userId: string): Promise<Call> {
+    if (!Types.ObjectId.isValid(callId)) {
+      throw new BadRequestException('Invalid call ID');
+    }
+
     const call = await this.callModel.findById(callId);
     if (!call) throw new NotFoundException('Call not found');
 
@@ -125,10 +154,10 @@ export class CallsService {
           type: 'call',
           text: `Missed ${call.type} call`,
         });
-        // Emit to participants
+        // Emit to room
         this.chatGateway.server
-          .to(conv._id.toString())
-          .emit('receiveDirectMessage', msg);
+          .to(`conv-${conv._id}`)
+          .emit('newDirectMessage', msg);
       }
     } catch (e) {
       this.logger.error('Failed to create call rejected message: ' + e.message);
@@ -138,6 +167,10 @@ export class CallsService {
   }
 
   async endCall(callId: string, userId: string): Promise<Call> {
+    if (!Types.ObjectId.isValid(callId)) {
+      throw new BadRequestException('Invalid call ID');
+    }
+
     const call = await this.callModel.findById(callId);
     if (!call) throw new NotFoundException('Call not found');
 
@@ -191,8 +224,8 @@ export class CallsService {
           text,
         });
         this.chatGateway.server
-          .to(conv._id.toString())
-          .emit('receiveDirectMessage', msg);
+          .to(`conv-${conv._id}`)
+          .emit('newDirectMessage', msg);
       }
     } catch (e) {
       this.logger.error('Failed to create call ended message: ' + e.message);
@@ -205,6 +238,10 @@ export class CallsService {
     callId: string,
     userId: string,
   ): Promise<{ token: string; uid: number; channelName: string }> {
+    if (!Types.ObjectId.isValid(callId)) {
+      throw new BadRequestException('Invalid call ID');
+    }
+
     const call = await this.callModel.findById(callId);
     if (!call) throw new NotFoundException('Call not found');
 
@@ -215,11 +252,8 @@ export class CallsService {
       throw new ForbiddenException('You are not part of this call');
     }
 
-    // UID can be based on something deterministic or random for the call.
-    // Let's generate a random UID between 1 and 100000 to avoid conflicts
     const uid = Math.floor(Math.random() * 100000) + 1;
 
-    // We can reuse the broadcastsService method
     const token = this.broadcastsService.generateAgoraToken(
       call.channelName,
       uid,
@@ -230,6 +264,10 @@ export class CallsService {
   }
 
   async getCallHistory(userId: string): Promise<Call[]> {
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new BadRequestException('Invalid user ID');
+    }
+
     return this.callModel
       .find({
         $or: [{ caller: userId }, { callee: userId }],
@@ -242,6 +280,10 @@ export class CallsService {
   }
 
   async getCallById(callId: string, userId: string): Promise<Call> {
+    if (!Types.ObjectId.isValid(callId)) {
+      throw new BadRequestException('Invalid call ID');
+    }
+
     const call = await this.callModel
       .findById(callId)
       .populate('caller', 'username displayName avatarUrl')

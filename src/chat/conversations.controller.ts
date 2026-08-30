@@ -7,6 +7,7 @@ import {
   UseGuards,
   BadRequestException,
 } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { ConversationsService } from './conversations.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -23,6 +24,9 @@ export class ConversationsController {
 
   @Get(':id')
   async getConversationById(@CurrentUser() user: any, @Param('id') id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid conversation ID');
+    }
     return this.conversationsService.getConversationById(id);
   }
 
@@ -31,8 +35,9 @@ export class ConversationsController {
     @CurrentUser() user: any,
     @Param('userId') targetUserId: string,
   ) {
-    if (!targetUserId)
-      throw new BadRequestException('Target user ID is required');
+    if (!targetUserId || !Types.ObjectId.isValid(targetUserId)) {
+      throw new BadRequestException('Valid target user ID is required');
+    }
     return this.conversationsService.findOrCreateConversation(
       user.userId,
       targetUserId,
@@ -46,6 +51,9 @@ export class ConversationsController {
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
   ) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException('Invalid conversation ID');
+    }
     const parsedLimit = limit ? parseInt(limit, 10) : 30;
 
     // Mark as read when messages are fetched
