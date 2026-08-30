@@ -50,20 +50,28 @@ export class CallsService {
     });
 
     const now = Date.now();
+    let stillActive = false;
+
     for (const ec of existingCalls) {
       // If a call has been ringing for more than 45s without answer, auto-end it
       if (ec.status === 'ringing' && now - new Date((ec as any).createdAt).getTime() > 45000) {
         ec.status = 'ended';
         ec.endedAt = new Date();
         await ec.save();
+      } else if (ec.status === 'active' || ec.status === 'ringing') {
+        const callerConnected = this.chatGateway.isUserConnected(ec.caller.toString());
+        const calleeConnected = this.chatGateway.isUserConnected(ec.callee.toString());
+        
+        if (!callerConnected || !calleeConnected) {
+          // Zombie call - one of the users disconnected without ending the call
+          ec.status = 'ended';
+          ec.endedAt = new Date();
+          await ec.save();
+        } else {
+          stillActive = true;
+        }
       }
     }
-
-    const stillActive = existingCalls.some(
-      (c) =>
-        c.status === 'active' ||
-        (c.status === 'ringing' && now - new Date((c as any).createdAt).getTime() <= 45000),
-    );
 
     if (stillActive) {
       throw new ConflictException('User is already in a call');

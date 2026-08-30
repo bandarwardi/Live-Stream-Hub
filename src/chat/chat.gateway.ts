@@ -517,4 +517,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
     return false;
   }
+
+  isUserConnected(userId: string): boolean {
+    return this.userSockets.has(userId.toString());
+  }
 }
