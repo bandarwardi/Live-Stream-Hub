@@ -46,8 +46,14 @@ export class User extends Document {
   @Prop({ default: 0 })
   coins: number;
 
+  @Prop({ default: 0 })
+  diamonds: number;
+
   @Prop({ default: false })
   isDeleted: boolean;
+
+  @Prop({ default: false })
+  isBanned: boolean;
 
   @Prop({ default: null })
   deletedAt: Date;

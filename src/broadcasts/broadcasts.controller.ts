@@ -12,12 +12,32 @@ import {
 } from '@nestjs/common';
 import { BroadcastsService } from './broadcasts.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminAuthGuard } from '../auth/guards/admin-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateBroadcastDto } from './dto/create-broadcast.dto';
 
 @Controller('broadcasts')
 export class BroadcastsController {
   constructor(private readonly broadcastsService: BroadcastsService) {}
+
+  @UseGuards(AdminAuthGuard)
+  @Get('admin/all')
+  async getAllForAdmin(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+  ) {
+    const pageNum = parseInt(page || '1', 10);
+    const limitNum = parseInt(limit || '20', 10);
+    return this.broadcastsService.findAllForAdmin(pageNum, limitNum, search);
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Patch('admin/:id/end')
+  async forceEndBroadcast(@Param('id') id: string) {
+    // Calling endBroadcast without userId bypasses broadcaster restriction
+    return this.broadcastsService.endBroadcast(id);
+  }
 
   @UseGuards(JwtAuthGuard)
   @Get('my-active')
@@ -61,7 +81,8 @@ export class BroadcastsController {
       uid,
       role,
     );
-    return { token, uid, channelName: broadcast.channelName, role };
+    const appId = this.broadcastsService.getAgoraAppId();
+    return { token, uid, channelName: broadcast.channelName, role, appId };
   }
 
   @UseGuards(JwtAuthGuard)

@@ -145,6 +145,10 @@ export class BroadcastsService implements OnModuleInit {
     );
   }
 
+  getAgoraAppId(): string {
+    return this.configService.get<string>('AGORA_APP_ID') || '';
+  }
+
   @Cron(CronExpression.EVERY_MINUTE)
   async cleanupZombieBroadcasts() {
     const ninetySecondsAgo = new Date(Date.now() - 90 * 1000);
@@ -261,5 +265,31 @@ export class BroadcastsService implements OnModuleInit {
       nextCursor: hasMore ? items[items.length - 1]._id.toString() : null,
       hasMore,
     };
+  }
+
+  async findAllForAdmin(
+    page: number = 1,
+    limit: number = 20,
+    search?: string,
+  ): Promise<{ data: Broadcast[]; total: number }> {
+    const skip = (page - 1) * limit;
+    const query: any = {};
+
+    if (search) {
+      query.$text = { $search: search };
+    }
+
+    const [data, total] = await Promise.all([
+      this.broadcastModel
+        .find(query)
+        .sort({ startedAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('broadcaster', 'username displayName avatarUrl')
+        .exec(),
+      this.broadcastModel.countDocuments(query).exec(),
+    ]);
+
+    return { data, total };
   }
 }

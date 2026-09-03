@@ -17,6 +17,7 @@ import {
 import { UsersService } from './users.service';
 import { FollowsService } from '../follows/follows.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminAuthGuard } from '../auth/guards/admin-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { StorageService } from '../storage/storage.service';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -28,6 +29,27 @@ export class UsersController {
     private readonly storageService: StorageService,
     private readonly followsService: FollowsService,
   ) {}
+
+  @UseGuards(AdminAuthGuard)
+  @Get('admin/all')
+  async getAllForAdmin(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+  ) {
+    const pageNum = parseInt(page || '1', 10);
+    const limitNum = parseInt(limit || '20', 10);
+    return this.usersService.findAllForAdmin(pageNum, limitNum, search);
+  }
+
+  @UseGuards(AdminAuthGuard)
+  @Patch('admin/:id/status')
+  async updateUserStatus(@Param('id') id: string, @Body('status') status: 'active' | 'banned') {
+    if (!['active', 'banned'].includes(status)) {
+      throw new BadRequestException('Invalid status');
+    }
+    return this.usersService.updateUserStatusByAdmin(id, status);
+  }
 
   @UseGuards(JwtAuthGuard)
   @Get('me')

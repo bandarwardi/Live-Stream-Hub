@@ -12,6 +12,14 @@ import { BroadcastsModule } from './broadcasts/broadcasts.module';
 import { ChatModule } from './chat/chat.module';
 import { CallsModule } from './calls/calls.module';
 import { StorageModule } from './storage/storage.module';
+import { AdminsModule } from './admins/admins.module';
+import { GiftsModule } from './gifts/gifts.module';
+import { StoreModule } from './store/store.module';
+import { LevelsModule } from './levels/levels.module';
+import { TransactionsModule } from './transactions/transactions.module';
+import { SettingsModule } from './settings/settings.module';
+import { TicketsModule } from './tickets/tickets.module';
+import { StatsModule } from './stats/stats.module';
 
 @Module({
   imports: [
@@ -40,6 +48,14 @@ import { StorageModule } from './storage/storage.module';
     ChatModule,
     CallsModule,
     StorageModule,
+    AdminsModule,
+    GiftsModule,
+    StoreModule,
+    LevelsModule,
+    TransactionsModule,
+    SettingsModule,
+    TicketsModule,
+    StatsModule,
   ],
   controllers: [HealthController],
   providers: [],

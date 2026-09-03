@@ -303,12 +303,13 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return { status: 'error', message: 'Insufficient coins' };
       }
 
-      // Add coins to broadcaster
+      // Add coins & diamonds to broadcaster
       const broadcast = await this.broadcastsService.findById(broadcastId);
       if (broadcast && broadcast.broadcaster) {
         const broadcasterId =
           (broadcast.broadcaster as any)._id || broadcast.broadcaster;
         await this.usersService.addCoins(broadcasterId.toString(), gift.price);
+        await this.usersService.addDiamonds(broadcasterId.toString(), gift.price);
       }
 
       // Emit gift event to everyone in the room (including the sender, so they see the animation)
@@ -458,9 +459,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         .find((p) => p.toString() !== user.userId)
         ?.toString();
 
-      // Add coins to recipient if it's a gift
+      // Add coins & diamonds to recipient if it's a gift
       if (payload.type === 'gift' && payload.giftData && recipientId) {
         await this.usersService.addCoins(recipientId, payload.giftData.price);
+        await this.usersService.addDiamonds(recipientId, payload.giftData.price);
       }
 
       const roomName = `conv-${payload.conversationId}`;

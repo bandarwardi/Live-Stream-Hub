@@ -245,9 +245,53 @@ export class UsersService {
     return !!result;
   }
 
-  async addCoins(userId: string, amount: number): Promise<void> {
-    await this.userModel
-      .findByIdAndUpdate(userId, { $inc: { coins: amount } })
+  async addCoins(userId: string, amount: number): Promise<User | null> {
+    return this.userModel
+      .findByIdAndUpdate(userId, { $inc: { coins: amount } }, { returnDocument: 'after' })
       .exec();
+  }
+
+  async deductDiamonds(userId: string, amount: number): Promise<boolean> {
+    const result = await this.userModel
+      .findOneAndUpdate(
+        { _id: userId, diamonds: { $gte: amount } },
+        { $inc: { diamonds: -amount } },
+        { returnDocument: 'after' },
+      )
+      .exec();
+    return !!result;
+  }
+
+  async addDiamonds(userId: string, amount: number): Promise<User | null> {
+    return this.userModel
+      .findByIdAndUpdate(userId, { $inc: { diamonds: amount } }, { returnDocument: 'after' })
+      .exec();
+  }
+
+  async findAllForAdmin(page: number = 1, limit: number = 20, search?: string): Promise<{ data: User[], total: number }> {
+    const skip = (page - 1) * limit;
+    const query: any = { isDeleted: { $ne: true } };
+    
+    if (search) {
+      query.$or = [
+        { displayName: { $regex: search, $options: 'i' } },
+        { username: { $regex: search, $options: 'i' } },
+      ];
+    }
+    
+    const [data, total] = await Promise.all([
+      this.userModel.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).exec(),
+      this.userModel.countDocuments(query).exec()
+    ]);
+    
+    return { data, total };
+  }
+
+  async updateUserStatusByAdmin(userId: string, status: 'active' | 'banned'): Promise<User> {
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+    
+    user.isBanned = status === 'banned';
+    return user.save();
   }
 }

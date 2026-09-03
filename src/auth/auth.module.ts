@@ -8,11 +8,13 @@ import { UsersModule } from '../users/users.module';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtRefreshStrategy } from './strategies/jwt-refresh.strategy';
 import { FirebaseModule } from '../firebase/firebase.module';
+import { AdminsModule } from '../admins/admins.module';
 
 @Module({
   imports: [
     FirebaseModule,
     UsersModule,
+    AdminsModule,
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

@@ -8,6 +8,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 import { FirebaseService } from '../firebase/firebase.service';
+import { AdminsService } from '../admins/admins.service';
 
 @Injectable()
 export class AuthService {
@@ -15,7 +16,34 @@ export class AuthService {
     private usersService: UsersService,
     private jwtService: JwtService,
     private firebaseService: FirebaseService,
+    private adminsService: AdminsService,
   ) {}
+
+  async adminLogin(username: string, pass: string) {
+    const admin = await this.adminsService.findByUsername(username);
+    if (!admin) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    const isMatch = await bcrypt.compare(pass, admin.passwordHash);
+    if (!isMatch) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    
+    // We can reuse generateTokens but flag it as admin somehow or just use a specific payload
+    // Let's create a custom token structure for admins
+    const payload = { sub: admin._id.toString(), username: admin.username, role: admin.role, isAdmin: true };
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '1d' });
+    
+    return {
+      accessToken,
+      admin: {
+        id: admin._id,
+        name: admin.name,
+        username: admin.username,
+        role: admin.role,
+      }
+    };
+  }
 
   async firebaseLogin(idToken: string) {
     let decodedToken;
@@ -84,6 +112,10 @@ export class AuthService {
       } else {
         throw new UnauthorizedException('هذا الحساب محذوف نهائياً.');
       }
+    }
+
+    if (user.isBanned) {
+      throw new UnauthorizedException('هذا الحساب محظور.');
     }
 
     await user.save();

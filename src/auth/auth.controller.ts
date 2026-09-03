@@ -26,6 +26,12 @@ export class AuthController {
     private readonly usersService: UsersService,
   ) {}
 
+  @HttpCode(HttpStatus.OK)
+  @Post('admin/login')
+  adminLogin(@Body() body: any) {
+    return this.authService.adminLogin(body.username, body.password);
+  }
+
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   @Post('firebase')
