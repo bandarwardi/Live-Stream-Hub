@@ -55,6 +55,38 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.server?.to(id).emit('broadcastEnded', { reason: 'timeout' });
       });
     };
+
+    this.broadcastsService.onBroadcastEnded = (
+      broadcastId,
+      reason,
+      broadcasterId,
+    ) => {
+      if (this.disconnectTimers.has(broadcastId)) {
+        clearTimeout(this.disconnectTimers.get(broadcastId));
+        this.disconnectTimers.delete(broadcastId);
+      }
+
+      this.logger.log(
+        `Emitting broadcastEnded for ${broadcastId} (reason: ${reason})`,
+      );
+
+      // 1. Emit to all room participants (viewers & host)
+      this.server?.to(broadcastId).emit('broadcastEnded', {
+        broadcastId,
+        reason: reason || 'ended',
+      });
+
+      // 2. Also directly inform the broadcaster socket if connected
+      if (broadcasterId) {
+        const broadcasterSocketId = this.userSockets.get(broadcasterId);
+        if (broadcasterSocketId) {
+          this.server?.to(broadcasterSocketId).emit('broadcastEnded', {
+            broadcastId,
+            reason: reason || 'ended',
+          });
+        }
+      }
+    };
   }
 
   async handleConnection(client: Socket) {

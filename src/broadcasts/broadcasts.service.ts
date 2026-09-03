@@ -19,6 +19,11 @@ export class BroadcastsService implements OnModuleInit {
   private readonly logger = new Logger(BroadcastsService.name);
 
   public onZombieCleanup?: (broadcastIds: string[]) => void;
+  public onBroadcastEnded?: (
+    broadcastId: string,
+    reason: string,
+    broadcasterId?: string,
+  ) => void;
 
   constructor(
     @InjectModel(Broadcast.name) private broadcastModel: Model<Broadcast>,
@@ -91,7 +96,22 @@ export class BroadcastsService implements OnModuleInit {
     broadcast.isLive = false;
     broadcast.status = 'ended';
     broadcast.endedAt = new Date();
-    return broadcast.save();
+    const saved = await broadcast.save();
+
+    const broadcasterId =
+      (broadcast.broadcaster as any)?._id?.toString() ||
+      broadcast.broadcaster?.toString();
+    const reason = userId ? 'broadcaster_ended' : 'admin_forced';
+
+    if (this.onBroadcastEnded) {
+      try {
+        this.onBroadcastEnded(broadcastId, reason, broadcasterId);
+      } catch (err) {
+        this.logger.error(`Error in onBroadcastEnded callback: ${err.message}`);
+      }
+    }
+
+    return saved;
   }
 
   async markDisconnected(broadcastId: string) {
