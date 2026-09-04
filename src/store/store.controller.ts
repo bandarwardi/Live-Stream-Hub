@@ -10,7 +10,9 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  Req,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { StoreService } from './store.service';
 import { CreateStoreItemDto } from './dto/create-store-item.dto';
@@ -124,5 +126,34 @@ export class StoreController {
   @Delete('admin/:id')
   remove(@Param('id') id: string) {
     return this.storeService.remove(id);
+  }
+
+  // ─── User endpoints ───────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Post('buy/:id')
+  buyItem(@Param('id') id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (!userId) throw new BadRequestException('User not authenticated');
+    return this.storeService.buyItem(userId, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('equip/:id')
+  equipItem(@Param('id') id: string, @Req() req: Request) {
+    const userId = (req as any).user?.userId;
+    if (!userId) throw new BadRequestException('User not authenticated');
+    return this.storeService.equipItem(userId, id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('unequip/:type')
+  unequipItem(
+    @Param('type') type: 'frame' | 'entry_effect' | 'chat_bubble',
+    @Req() req: Request,
+  ) {
+    const userId = (req as any).user?.userId;
+    if (!userId) throw new BadRequestException('User not authenticated');
+    return this.storeService.unequipItem(userId, type);
   }
 }

@@ -111,6 +111,16 @@ export class User extends Document {
 
   @Prop({ default: null })
   lastSeen: Date;
+
+  // Store equip fields
+  @Prop({ default: null })
+  activeFrame: string; // itemId or imageUrl of the equipped avatar frame
+
+  @Prop({ default: null })
+  activeEntryEffect: string; // itemId or animationUrl of the live entry effect
+
+  @Prop({ default: null })
+  activeChatBubble: string; // itemId of the equipped chat bubble
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

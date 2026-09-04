@@ -222,10 +222,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         await this.chatService.getRecentMessages(broadcastId);
       client.emit('recentMessages', recentMessages);
 
+      // Fetch full user profile to get activeEntryEffect
+      const fullUser = await this.usersService.findById(user.userId);
+
       // Create a system message (not saved to DB to save space, just emitted)
       const joinMessage = {
         _id: `sys-${Date.now()}-${client.id}`,
-        sender: user,
+        sender: {
+          ...user,
+          levelBadgeUrl: fullUser?.levelBadgeUrl || null,
+          currentLevel: fullUser?.currentLevel || 1,
+          activeFrame: fullUser?.activeFrame || null,
+        },
         text: `${user.displayName} joined the stream`,
         type: 'system',
         createdAt: new Date().toISOString(),
@@ -233,6 +241,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Broadcast system message to everyone in the room EXCEPT the sender
       client.to(broadcastId).emit('newMessage', joinMessage);
+
+      // Fire entry effect if the user has one equipped
+      if (fullUser?.activeEntryEffect) {
+        client.to(broadcastId).emit('userEntryEffect', {
+          user: {
+            _id: user.userId,
+            displayName: user.displayName,
+            avatarUrl: user.avatarUrl,
+            currentLevel: fullUser.currentLevel || 1,
+            levelBadgeUrl: fullUser.levelBadgeUrl || null,
+          },
+          entryEffectId: fullUser.activeEntryEffect,
+          timestamp: new Date().toISOString(),
+        });
+      }
 
       // Update viewer count (socket.io adapter rooms)
       this.updateViewerCount(broadcastId);
