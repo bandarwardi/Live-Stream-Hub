@@ -18,6 +18,7 @@ import { UsersService } from '../users/users.service';
 import { ConversationsService } from './conversations.service';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ConfigService } from '@nestjs/config';
+import { LevelsService } from '../levels/levels.service';
 
 @WebSocketGateway({ cors: { origin: '*' } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -49,7 +50,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly usersService: UsersService,
     private readonly conversationsService: ConversationsService,
     private readonly firebaseService: FirebaseService,
+    private readonly levelsService: LevelsService,
   ) {
+
     this.broadcastsService.onZombieCleanup = (broadcastIds) => {
       broadcastIds.forEach((id) => {
         this.server?.to(id).emit('broadcastEnded', { reason: 'timeout' });
@@ -342,7 +345,63 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           (broadcast.broadcaster as any)._id || broadcast.broadcaster;
         await this.usersService.addCoins(broadcasterId.toString(), gift.price);
         await this.usersService.addDiamonds(broadcasterId.toString(), gift.price);
+
+        // Grant XP to broadcaster (3 XP per coin received - Bigo Live style)
+        try {
+          const hostXPResult = await this.levelsService.processXPGain(
+            broadcasterId.toString(),
+            gift.price * 3,
+            'receive_gift',
+          );
+          if (hostXPResult?.leveledUp && hostXPResult.newLevel) {
+            const hostSocketId = this.userSockets.get(broadcasterId.toString());
+            if (hostSocketId) {
+              this.server.to(hostSocketId).emit('levelUp', {
+                userId: broadcasterId.toString(),
+                newLevel: hostXPResult.newLevel,
+                rewards: hostXPResult.rewards,
+              });
+            }
+            this.server.to(broadcastId).emit('userLevelUp', {
+              user: {
+                _id: broadcasterId,
+                level: hostXPResult.newLevel.level,
+                badgeUrl: hostXPResult.newLevel.badgeUrl,
+              },
+              newLevel: hostXPResult.newLevel,
+            });
+          }
+        } catch (xpErr) {
+          this.logger.warn(`Broadcaster XP gain failed: ${xpErr.message}`);
+        }
       }
+
+      // Grant XP to sender (1 XP per coin spent)
+      try {
+        const senderXPResult = await this.levelsService.processXPGain(
+          user.userId,
+          gift.price * 1,
+          'send_gift',
+        );
+        if (senderXPResult?.leveledUp && senderXPResult.newLevel) {
+          client.emit('levelUp', {
+            userId: user.userId,
+            newLevel: senderXPResult.newLevel,
+            rewards: senderXPResult.rewards,
+          });
+          this.server.to(broadcastId).emit('userLevelUp', {
+            user: {
+              ...user,
+              level: senderXPResult.newLevel.level,
+              badgeUrl: senderXPResult.newLevel.badgeUrl,
+            },
+            newLevel: senderXPResult.newLevel,
+          });
+        }
+      } catch (xpErr) {
+        this.logger.warn(`Sender XP gain failed: ${xpErr.message}`);
+      }
+
 
       // Emit gift event to everyone in the room (including the sender, so they see the animation)
       this.server.to(broadcastId).emit('giftReceived', {
@@ -368,6 +427,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.emit('error', error.message);
     }
   }
+
 
   @UseGuards(WsJwtGuard)
   @SubscribeMessage('sendReaction')

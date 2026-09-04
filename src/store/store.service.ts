@@ -27,12 +27,20 @@ export class StoreService {
   }
 
   async findById(id: string): Promise<StoreItem> {
+    if (!id || !require('mongoose').Types.ObjectId.isValid(id)) {
+      throw new NotFoundException(`Invalid store item ID: ${id}`);
+    }
     const item = await this.storeItemModel.findById(id).exec();
     if (!item) {
       throw new NotFoundException(`StoreItem with ID ${id} not found`);
     }
     return item;
   }
+
+  async findByName(name: string): Promise<StoreItem | null> {
+    return this.storeItemModel.findOne({ name }).exec();
+  }
+
 
   async update(id: string, updateStoreItemDto: UpdateStoreItemDto, imageUrl?: string, animationUrl?: string): Promise<StoreItem> {
     const item = await this.findById(id);

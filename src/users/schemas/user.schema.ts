@@ -49,6 +49,27 @@ export class User extends Document {
   @Prop({ default: 0 })
   diamonds: number;
 
+  @Prop({ default: 0, min: 0 })
+  xp: number;
+
+  @Prop({ default: 1, min: 1 })
+  currentLevel: number;
+
+  @Prop({ default: null })
+  levelBadgeUrl: string;
+
+  @Prop({ type: Array, default: [] })
+  inventory: Array<{
+    itemId: string;
+    name: string;
+    type: string;
+    imageUrl?: string;
+    animationUrl?: string;
+    unlockedAt: Date;
+    source: string;
+  }>;
+
+
   @Prop({ default: false })
   isDeleted: boolean;
 

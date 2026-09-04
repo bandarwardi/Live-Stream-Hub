@@ -18,6 +18,7 @@ import { ConversationsController } from './conversations.controller';
 import { BroadcastsModule } from '../broadcasts/broadcasts.module';
 import { UsersModule } from '../users/users.module';
 import { FirebaseModule } from '../firebase/firebase.module';
+import { LevelsModule } from '../levels/levels.module';
 
 @Module({
   imports: [
@@ -36,9 +37,11 @@ import { FirebaseModule } from '../firebase/firebase.module';
     BroadcastsModule,
     UsersModule,
     FirebaseModule,
+    LevelsModule,
   ],
   controllers: [ConversationsController],
   providers: [ChatService, ChatGateway, ConversationsService],
   exports: [ChatService, ConversationsService, ChatGateway],
 })
 export class ChatModule {}
+

@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { User } from './schemas/user.schema';
 import { FirebaseService } from '../firebase/firebase.service';
 
@@ -267,6 +267,56 @@ export class UsersService {
       .findByIdAndUpdate(userId, { $inc: { diamonds: amount } }, { returnDocument: 'after' })
       .exec();
   }
+
+  async addXP(userId: string, amount: number): Promise<User | null> {
+    if (!Types.ObjectId.isValid(userId)) return null;
+    return this.userModel
+      .findByIdAndUpdate(
+        userId,
+        { $inc: { xp: amount } },
+        { returnDocument: 'after' },
+      )
+      .exec();
+  }
+
+  async updateLevel(
+    userId: string,
+    level: number,
+    badgeUrl?: string,
+  ): Promise<User | null> {
+    if (!Types.ObjectId.isValid(userId)) return null;
+    const updateData: any = { currentLevel: level };
+    if (badgeUrl !== undefined) {
+      updateData.levelBadgeUrl = badgeUrl;
+    }
+    return this.userModel
+      .findByIdAndUpdate(userId, { $set: updateData }, { returnDocument: 'after' })
+      .exec();
+  }
+
+  async addInventoryItem(userId: string, item: {
+    itemId: string;
+    name: string;
+    type: string;
+    imageUrl?: string;
+    animationUrl?: string;
+    source?: string;
+  }): Promise<User | null> {
+    if (!Types.ObjectId.isValid(userId)) return null;
+    const inventoryItem = {
+      ...item,
+      unlockedAt: new Date(),
+      source: item.source || 'level_reward',
+    };
+    return this.userModel
+      .findByIdAndUpdate(
+        userId,
+        { $push: { inventory: inventoryItem } },
+        { returnDocument: 'after' },
+      )
+      .exec();
+  }
+
 
   async findAllForAdmin(page: number = 1, limit: number = 20, search?: string): Promise<{ data: User[], total: number }> {
     const skip = (page - 1) * limit;

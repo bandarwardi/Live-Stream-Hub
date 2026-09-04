@@ -9,6 +9,7 @@ import {
   UseGuards,
   UseInterceptors,
   UploadedFile,
+  Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { LevelsService } from './levels.service';
@@ -34,6 +35,15 @@ export class LevelsController {
   ) {
     createLevelDto.level = Number(createLevelDto.level);
     createLevelDto.minXP = Number(createLevelDto.minXP);
+    if (createLevelDto.maxXP !== undefined) {
+      createLevelDto.maxXP = Number(createLevelDto.maxXP);
+    }
+    if (createLevelDto.rewardCoins !== undefined) {
+      createLevelDto.rewardCoins = Number(createLevelDto.rewardCoins);
+    }
+    if (createLevelDto.rewardDiamonds !== undefined) {
+      createLevelDto.rewardDiamonds = Number(createLevelDto.rewardDiamonds);
+    }
 
     let badgeUrl;
     if (file) {
@@ -49,10 +59,17 @@ export class LevelsController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('my-progress')
+  getMyProgress(@Req() req: any) {
+    const userId = req.user?.userId || req.user?.id || req.user?._id;
+    return this.levelsService.getUserProgress(userId);
+  }
+
   @Get()
   findAll() {
-    return this.levelsService.findAllForAdmin();
+    return this.levelsService.findAll();
   }
+
 
   @Get(':id')
   findOne(@Param('id') id: string) {
@@ -74,8 +91,12 @@ export class LevelsController {
     
     if (updateLevelDto.level !== undefined) updateLevelDto.level = Number(updateLevelDto.level);
     if (updateLevelDto.minXP !== undefined) updateLevelDto.minXP = Number(updateLevelDto.minXP);
+    if (updateLevelDto.maxXP !== undefined) updateLevelDto.maxXP = Number(updateLevelDto.maxXP);
+    if (updateLevelDto.rewardCoins !== undefined) updateLevelDto.rewardCoins = Number(updateLevelDto.rewardCoins);
+    if (updateLevelDto.rewardDiamonds !== undefined) updateLevelDto.rewardDiamonds = Number(updateLevelDto.rewardDiamonds);
 
     return this.levelsService.update(id, updateLevelDto, badgeUrl);
+
   }
 
   @UseGuards(AdminAuthGuard)
