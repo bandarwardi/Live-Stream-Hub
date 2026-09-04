@@ -2,7 +2,17 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+const envFile = path.resolve(__dirname, '../.env');
+if (fs.existsSync(envFile)) {
+  fs.readFileSync(envFile, 'utf8').split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) return;
+    const [key, ...rest] = trimmed.split('=');
+    if (key && !process.env[key.trim()]) {
+      process.env[key.trim()] = rest.join('=').replace(/^["']|["']$/g, '').trim();
+    }
+  });
+}
 
 const s3Client = new S3Client({
   region: process.env.S3_REGION || 'auto',

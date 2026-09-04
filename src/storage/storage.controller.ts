@@ -33,14 +33,8 @@ export class StorageController {
     return { url };
   }
 
-  @Get(':folder/:filename')
-  async getFile(
-    @Param('folder') folder: string,
-    @Param('filename') filename: string,
-    @Res() res: Response,
-  ) {
-    const key = `${folder}/${filename}`;
-    if (!folder || !filename) {
+  private async serveFile(key: string, res: Response) {
+    if (!key) {
       return res.status(400).send('Key is required');
     }
 
@@ -54,8 +48,27 @@ export class StorageController {
       });
       res.send(Buffer.from(buffer));
     } catch (err) {
-      console.error('Storage Proxy Error:', err);
+      console.error(`Storage Proxy Error for key "${key}":`, err);
       return res.status(404).send('File not found');
     }
+  }
+
+  @Get(':folder/:subfolder/:filename')
+  async getNestedFile(
+    @Param('folder') folder: string,
+    @Param('subfolder') subfolder: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    return this.serveFile(`${folder}/${subfolder}/${filename}`, res);
+  }
+
+  @Get(':folder/:filename')
+  async getFile(
+    @Param('folder') folder: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    return this.serveFile(`${folder}/${filename}`, res);
   }
 }
