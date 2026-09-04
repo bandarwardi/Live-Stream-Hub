@@ -8,10 +8,10 @@ import {
   Delete,
   UseGuards,
   UseInterceptors,
-  UploadedFile,
+  UploadedFiles,
   BadRequestException,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { StoreService } from './store.service';
 import { CreateStoreItemDto } from './dto/create-store-item.dto';
 import { UpdateStoreItemDto } from './dto/update-store-item.dto';
@@ -28,12 +28,22 @@ export class StoreController {
 
   @UseGuards(AdminAuthGuard)
   @Post('admin')
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'image', maxCount: 1 },
+      { name: 'animation', maxCount: 1 },
+    ]),
+  )
   async create(
     @Body() createStoreItemDto: CreateStoreItemDto,
-    @UploadedFile() file: Express.Multer.File,
+    @UploadedFiles()
+    files: {
+      image?: Express.Multer.File[];
+      animation?: Express.Multer.File[];
+    },
   ) {
-    if (!file) {
+    const imageFile = files?.image?.[0];
+    if (!imageFile) {
       throw new BadRequestException('Store item image is required');
     }
     // Parse numeric/boolean values from FormData
@@ -43,8 +53,15 @@ export class StoreController {
       createStoreItemDto.isActive = String(createStoreItemDto.isActive) === 'true';
     }
 
-    const imageUrl = await this.storageService.uploadFile(file, 'store');
-    return this.storeService.create(createStoreItemDto, imageUrl);
+    const imageUrl = await this.storageService.uploadFile(imageFile, 'store');
+
+    let animationUrl: string | undefined = createStoreItemDto.animationUrl;
+    const animationFile = files?.animation?.[0];
+    if (animationFile) {
+      animationUrl = await this.storageService.uploadFile(animationFile, 'store/animations');
+    }
+
+    return this.storeService.create(createStoreItemDto, imageUrl, animationUrl);
   }
 
   @UseGuards(AdminAuthGuard)
@@ -66,15 +83,31 @@ export class StoreController {
 
   @UseGuards(AdminAuthGuard)
   @Patch('admin/:id')
-  @UseInterceptors(FileInterceptor('image'))
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'image', maxCount: 1 },
+      { name: 'animation', maxCount: 1 },
+    ]),
+  )
   async update(
     @Param('id') id: string,
     @Body() updateStoreItemDto: UpdateStoreItemDto,
-    @UploadedFile() file?: Express.Multer.File,
+    @UploadedFiles()
+    files?: {
+      image?: Express.Multer.File[];
+      animation?: Express.Multer.File[];
+    },
   ) {
-    let imageUrl;
-    if (file) {
-      imageUrl = await this.storageService.uploadFile(file, 'store');
+    let imageUrl: string | undefined;
+    const imageFile = files?.image?.[0];
+    if (imageFile) {
+      imageUrl = await this.storageService.uploadFile(imageFile, 'store');
+    }
+
+    let animationUrl: string | undefined = updateStoreItemDto.animationUrl;
+    const animationFile = files?.animation?.[0];
+    if (animationFile) {
+      animationUrl = await this.storageService.uploadFile(animationFile, 'store/animations');
     }
     
     // Parse numeric/boolean values from FormData if present
@@ -84,7 +117,7 @@ export class StoreController {
       updateStoreItemDto.isActive = String(updateStoreItemDto.isActive) === 'true';
     }
 
-    return this.storeService.update(id, updateStoreItemDto, imageUrl);
+    return this.storeService.update(id, updateStoreItemDto, imageUrl, animationUrl);
   }
 
   @UseGuards(AdminAuthGuard)

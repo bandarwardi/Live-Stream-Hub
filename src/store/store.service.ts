@@ -9,10 +9,11 @@ import { UpdateStoreItemDto } from './dto/update-store-item.dto';
 export class StoreService {
   constructor(@InjectModel(StoreItem.name) private storeItemModel: Model<StoreItem>) {}
 
-  async create(createStoreItemDto: CreateStoreItemDto, imageUrl: string): Promise<StoreItem> {
+  async create(createStoreItemDto: CreateStoreItemDto, imageUrl: string, animationUrl?: string): Promise<StoreItem> {
     const createdItem = new this.storeItemModel({
       ...createStoreItemDto,
       imageUrl,
+      animationUrl: animationUrl || createStoreItemDto.animationUrl || null,
     });
     return createdItem.save();
   }
@@ -33,7 +34,7 @@ export class StoreService {
     return item;
   }
 
-  async update(id: string, updateStoreItemDto: UpdateStoreItemDto, imageUrl?: string): Promise<StoreItem> {
+  async update(id: string, updateStoreItemDto: UpdateStoreItemDto, imageUrl?: string, animationUrl?: string): Promise<StoreItem> {
     const item = await this.findById(id);
     
     if (updateStoreItemDto.name !== undefined) item.name = updateStoreItemDto.name;
@@ -43,6 +44,11 @@ export class StoreService {
     if (updateStoreItemDto.type !== undefined) item.type = updateStoreItemDto.type;
     if (updateStoreItemDto.isActive !== undefined) item.isActive = updateStoreItemDto.isActive;
     if (imageUrl !== undefined) item.imageUrl = imageUrl;
+    if (animationUrl !== undefined) {
+      item.animationUrl = animationUrl;
+    } else if (updateStoreItemDto.animationUrl !== undefined) {
+      item.animationUrl = updateStoreItemDto.animationUrl;
+    }
 
     return item.save();
   }
