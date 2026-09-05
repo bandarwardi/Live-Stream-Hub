@@ -1160,6 +1160,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data.seatIndex,
         data.isLocked,
       );
+      this.server.to(`voice-${data.roomId}`).emit('seatsUpdated', {
+        roomId: data.roomId,
+        seats: updatedSeats,
+      });
       return { status: 'success', seats: updatedSeats };
     } catch (error) {
       client.emit('error', error.message);
@@ -1222,17 +1226,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const user = client.data.user;
 
-      // 1. Deduct coins from sender
-      const hasEnoughCoins = await this.usersService.deductCoins(
-        user.userId,
-        data.gift.price,
-      );
-      if (!hasEnoughCoins) {
-        client.emit('error', 'Insufficient coins to send this gift');
-        return { status: 'error', message: 'Insufficient coins' };
-      }
-
-      // 2. Identify recipient
+      // 1. Identify recipient
       const room = await this.voiceRoomsService.findById(data.roomId);
       let recipientId: string;
       let recipientName = 'Host';
@@ -1251,6 +1245,22 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         const hostUser = await this.usersService.findById(recipientId);
         recipientName = hostUser?.displayName || hostUser?.username || 'Host';
         recipientAvatar = hostUser?.avatarUrl || null;
+      }
+
+      // Prevent users from sending gifts to themselves
+      if (recipientId === user.userId) {
+        client.emit('error', 'You cannot send gifts to yourself');
+        return { status: 'error', message: 'You cannot send gifts to yourself' };
+      }
+
+      // 2. Deduct coins from sender
+      const hasEnoughCoins = await this.usersService.deductCoins(
+        user.userId,
+        data.gift.price,
+      );
+      if (!hasEnoughCoins) {
+        client.emit('error', 'Insufficient coins to send this gift');
+        return { status: 'error', message: 'Insufficient coins' };
       }
 
       // 3. Add coins and diamonds to recipient
