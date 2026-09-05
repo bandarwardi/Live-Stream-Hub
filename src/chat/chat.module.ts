@@ -19,6 +19,8 @@ import { BroadcastsModule } from '../broadcasts/broadcasts.module';
 import { UsersModule } from '../users/users.module';
 import { FirebaseModule } from '../firebase/firebase.module';
 import { LevelsModule } from '../levels/levels.module';
+import { VoiceRoomsModule } from '../voice-rooms/voice-rooms.module';
+import { TransactionsModule } from '../transactions/transactions.module';
 
 @Module({
   imports: [
@@ -35,6 +37,8 @@ import { LevelsModule } from '../levels/levels.module';
       inject: [ConfigService],
     }),
     BroadcastsModule,
+    VoiceRoomsModule,
+    TransactionsModule,
     UsersModule,
     FirebaseModule,
     LevelsModule,

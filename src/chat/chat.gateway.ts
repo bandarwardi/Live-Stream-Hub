@@ -19,6 +19,8 @@ import { ConversationsService } from './conversations.service';
 import { FirebaseService } from '../firebase/firebase.service';
 import { ConfigService } from '@nestjs/config';
 import { LevelsService } from '../levels/levels.service';
+import { VoiceRoomsService } from '../voice-rooms/voice-rooms.service';
+import { TransactionsService } from '../transactions/transactions.service';
 
 @WebSocketGateway({ cors: { origin: '*' } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -39,6 +41,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // Maps broadcastId -> active disconnect timer reference
   private disconnectTimers = new Map<string, NodeJS.Timeout>();
 
+  // Voice rooms tracking
+  private voiceHostSockets = new Map<
+    string,
+    { roomId: string; userId: string }
+  >();
+  private voiceDisconnectTimers = new Map<string, NodeJS.Timeout>();
+  // roomId -> Map<userId, { user: any; totalCoins: number }>
+  private voiceRoomLeaderboards = new Map<
+    string,
+    Map<string, { user: any; totalCoins: number }>
+  >();
+
   // Maps userId -> socketId for direct real-time events (calls, DMs)
   private userSockets = new Map<string, string>();
 
@@ -51,8 +65,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly conversationsService: ConversationsService,
     private readonly firebaseService: FirebaseService,
     private readonly levelsService: LevelsService,
+    private readonly voiceRoomsService: VoiceRoomsService,
+    private readonly transactionsService: TransactionsService,
   ) {
-
     this.broadcastsService.onZombieCleanup = (broadcastIds) => {
       broadcastIds.forEach((id) => {
         this.server?.to(id).emit('broadcastEnded', { reason: 'timeout' });
@@ -89,6 +104,45 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
         }
       }
+    };
+
+    // Voice Room Callbacks
+    this.voiceRoomsService.onZombieCleanup = (roomIds) => {
+      roomIds.forEach((id) => {
+        this.server?.to(`voice-${id}`).emit('voiceRoomEnded', {
+          roomId: id,
+          reason: 'timeout',
+        });
+      });
+    };
+
+    this.voiceRoomsService.onVoiceRoomEnded = (roomId, reason, hostId) => {
+      if (this.voiceDisconnectTimers.has(roomId)) {
+        clearTimeout(this.voiceDisconnectTimers.get(roomId));
+        this.voiceDisconnectTimers.delete(roomId);
+      }
+      this.logger.log(`Emitting voiceRoomEnded for ${roomId} (${reason})`);
+      this.server?.to(`voice-${roomId}`).emit('voiceRoomEnded', {
+        roomId,
+        reason: reason || 'ended',
+      });
+      if (hostId) {
+        const hostSocketId = this.userSockets.get(hostId);
+        if (hostSocketId) {
+          this.server?.to(hostSocketId).emit('voiceRoomEnded', {
+            roomId,
+            reason: reason || 'ended',
+          });
+        }
+      }
+      this.voiceRoomLeaderboards.delete(roomId);
+    };
+
+    this.voiceRoomsService.onSeatsUpdated = (roomId, seats) => {
+      this.server?.to(`voice-${roomId}`).emit('seatsUpdated', {
+        roomId,
+        seats,
+      });
     };
   }
 
@@ -136,39 +190,68 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.userSockets.delete(client.data.user.userId);
     }
 
+    // Handle regular broadcaster disconnect
     const broadcasterInfo = this.broadcasterSockets.get(client.id);
+    if (broadcasterInfo) {
+      this.broadcasterSockets.delete(client.id);
+      const { broadcastId } = broadcasterInfo;
+      const TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 
-    if (!broadcasterInfo) {
-      // This was a viewer — no special handling needed
-      // (socket.io automatically removes them from all rooms)
-      return;
-    }
-
-    // Clean up the socket tracking entry
-    this.broadcasterSockets.delete(client.id);
-
-    const { broadcastId } = broadcasterInfo;
-    const TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
-
-    // Update DB status to disconnected and record timestamp
-    await this.broadcastsService.markDisconnected(broadcastId);
-
-    // Notify all viewers
-    this.server
-      .to(broadcastId)
-      .emit('broadcasterDisconnected', { timeoutMs: TIMEOUT_MS });
-
-    // Start the auto-end timer
-    const timer = setTimeout(async () => {
-      this.disconnectTimers.delete(broadcastId);
-      await this.broadcastsService.endBroadcast(broadcastId);
-      // Notify all waiting viewers so they can navigate away
+      await this.broadcastsService.markDisconnected(broadcastId);
       this.server
         .to(broadcastId)
-        .emit('broadcastEnded', { reason: 'broadcaster_timeout' });
-    }, TIMEOUT_MS);
+        .emit('broadcasterDisconnected', { timeoutMs: TIMEOUT_MS });
 
-    this.disconnectTimers.set(broadcastId, timer);
+      const timer = setTimeout(async () => {
+        this.disconnectTimers.delete(broadcastId);
+        await this.broadcastsService.endBroadcast(broadcastId);
+        this.server
+          .to(broadcastId)
+          .emit('broadcastEnded', { reason: 'broadcaster_timeout' });
+      }, TIMEOUT_MS);
+
+      this.disconnectTimers.set(broadcastId, timer);
+    }
+
+    // Handle voice room host disconnect
+    const voiceHostInfo = this.voiceHostSockets.get(client.id);
+    if (voiceHostInfo) {
+      this.voiceHostSockets.delete(client.id);
+      const { roomId } = voiceHostInfo;
+      const TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+
+      await this.voiceRoomsService.markDisconnected(roomId);
+      this.server
+        .to(`voice-${roomId}`)
+        .emit('voiceHostDisconnected', { timeoutMs: TIMEOUT_MS });
+
+      const timer = setTimeout(async () => {
+        this.voiceDisconnectTimers.delete(roomId);
+        await this.voiceRoomsService.endRoom(roomId, undefined, 'host_timeout');
+        this.server
+          .to(`voice-${roomId}`)
+          .emit('voiceRoomEnded', { roomId, reason: 'host_timeout' });
+      }, TIMEOUT_MS);
+
+      this.voiceDisconnectTimers.set(roomId, timer);
+    }
+
+    // Handle voice room guest leaving seat on disconnect
+    if (client.data?.currentVoiceRoom && client.data?.user?.userId) {
+      const vRoomId = client.data.currentVoiceRoom;
+      const vUserId = client.data.user.userId;
+      this.voiceRoomsService.findById(vRoomId).then((vRoom) => {
+        if (vRoom && vRoom.isLive) {
+          const seat = vRoom.seats.find(
+            (s) => s.userId && s.userId.toString() === vUserId,
+          );
+          if (seat && seat.index !== 0) {
+            this.voiceRoomsService.leaveSeat(vRoomId, seat.index, vUserId);
+          }
+        }
+      }).catch(() => {});
+      this.updateVoiceRoomViewerCount(vRoomId);
+    }
   }
 
   @UseGuards(WsJwtGuard)
@@ -357,7 +440,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         gift.price,
       );
       if (!hasEnoughCoins) {
-        client.emit('error', 'رصيدك غير كافٍ لإرسال هذه الهدية');
+        client.emit('error', 'Insufficient coins to send this gift');
         return { status: 'error', message: 'Insufficient coins' };
       }
 
@@ -486,7 +569,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.conversationsService as any
       ).conversationModel.findById(conversationId);
       if (!conversation) {
-        client.emit('error', 'المحادثة غير موجودة');
+        client.emit('error', 'Conversation not found');
         return { status: 'error', message: 'Conversation not found' };
       }
 
@@ -494,7 +577,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         (p) => p.toString() === user.userId,
       );
       if (!isParticipant) {
-        client.emit('error', 'غير مصرح لك بالانضمام لهذه المحادثة');
+        client.emit('error', 'Unauthorized to join this conversation');
         return { status: 'error', message: 'Unauthorized' };
       }
 
@@ -546,7 +629,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           payload.giftData.price,
         );
         if (!hasEnoughCoins) {
-          client.emit('error', 'رصيدك غير كافٍ لإرسال هذه الهدية');
+          client.emit('error', 'Insufficient coins to send this gift');
           return { status: 'error', message: 'Insufficient coins' };
         }
 
@@ -598,11 +681,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           if (!isRecipientInRoom) {
             // Send push notification
             let body = payload.text || '';
-            if (payload.type === 'image') body = '📸 أرسل لك صورة';
-            if (payload.type === 'video') body = '🎥 أرسل لك فيديو';
-            if (payload.type === 'audio') body = '🎵 أرسل لك رسالة صوتية';
+            if (payload.type === 'image') body = '📸 Sent you an image';
+            if (payload.type === 'video') body = '🎥 Sent you a video';
+            if (payload.type === 'audio') body = '🎵 Sent you a voice message';
             if (payload.type === 'gift')
-              body = `🎁 أرسل لك هدية ${payload.giftData?.name}`;
+              body = `🎁 Sent you a gift: ${payload.giftData?.name}`;
 
             await this.firebaseService.sendPushNotification(
               recipient.pushToken,
@@ -624,6 +707,743 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
   }
 
+  // --- VOICE ROOM EVENTS ---
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('joinVoiceRoom')
+  async handleJoinVoiceRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('roomId') roomId: string,
+  ) {
+    try {
+      const room = await this.voiceRoomsService.findById(roomId);
+      if (!room || !room.isLive) {
+        throw new WsException('Voice room not found or ended');
+      }
+
+      const roomChannel = `voice-${roomId}`;
+      client.join(roomChannel);
+      client.data.currentVoiceRoom = roomId;
+
+      const user = client.data.user;
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      const isHost = user.userId === hostId;
+
+      if (isHost) {
+        this.voiceHostSockets.set(client.id, {
+          roomId,
+          userId: user.userId,
+        });
+
+        // Cancel disconnect timer if reconnecting
+        if (this.voiceDisconnectTimers.has(roomId)) {
+          clearTimeout(this.voiceDisconnectTimers.get(roomId));
+          this.voiceDisconnectTimers.delete(roomId);
+          await this.voiceRoomsService.updateStatus(roomId, 'live');
+          this.server
+            .to(roomChannel)
+            .emit('voiceHostReconnected', { roomId });
+        }
+      }
+
+      // Update viewer count
+      this.updateVoiceRoomViewerCount(roomId);
+
+      // Get current leaderboard
+      const roomLb = this.voiceRoomLeaderboards.get(roomId);
+      const topGifters = roomLb
+        ? Array.from(roomLb.values())
+            .sort((a, b) => b.totalCoins - a.totalCoins)
+            .slice(0, 10)
+        : [];
+
+      // Send initial room state to newly joined client
+      client.emit('voiceRoomState', {
+        room,
+        seats: room.seats,
+        topGifters,
+      });
+
+      // Entry effect & System message
+      const fullUser = await this.usersService.findById(user.userId);
+      if (fullUser?.activeEntryEffect) {
+        client.to(roomChannel).emit('userEntryEffect', {
+          user: {
+            _id: user.userId,
+            displayName: user.displayName,
+            avatarUrl: user.avatarUrl,
+            currentLevel: fullUser.currentLevel || 1,
+            levelBadgeUrl: fullUser.levelBadgeUrl || null,
+          },
+          entryEffectId: fullUser.activeEntryEffect,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // System join announcement to other viewers
+      client.to(roomChannel).emit('voiceRoomMessage', {
+        _id: `sys-${Date.now()}-${client.id}`,
+        sender: {
+          ...user,
+          currentLevel: fullUser?.currentLevel || 1,
+          levelBadgeUrl: fullUser?.levelBadgeUrl || null,
+        },
+        text: `${user.displayName} joined the room`,
+        type: 'system',
+        createdAt: new Date().toISOString(),
+      });
+
+      return { status: 'joined', roomId };
+    } catch (error) {
+      this.logger.error(`Join voice room failed: ${error.message}`);
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('leaveVoiceRoom')
+  async handleLeaveVoiceRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('roomId') roomId: string,
+  ) {
+    const roomChannel = `voice-${roomId}`;
+    client.leave(roomChannel);
+    if (client.data.currentVoiceRoom === roomId) {
+      client.data.currentVoiceRoom = null;
+    }
+
+    // If leaving user is occupying a guest seat (index !== 0), vacate the seat immediately
+    if (client.data?.user?.userId) {
+      const vUserId = client.data.user.userId;
+      this.voiceRoomsService.findById(roomId).then((vRoom) => {
+        if (vRoom && vRoom.isLive) {
+          const seat = vRoom.seats.find(
+            (s) => s.userId && s.userId.toString() === vUserId,
+          );
+          if (seat && seat.index !== 0) {
+            this.voiceRoomsService.leaveSeat(roomId, seat.index, vUserId);
+          }
+        }
+      }).catch(() => {});
+    }
+
+    this.updateVoiceRoomViewerCount(roomId);
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('requestSeat')
+  async handleRequestSeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; seatIndex?: number },
+  ) {
+    try {
+      const user = client.data.user;
+      const request = await this.voiceRoomsService.createSeatRequest(
+        data.roomId,
+        user.userId,
+        data.seatIndex ?? -1,
+      );
+
+      // Find host and notify them directly
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      const hostSocketId = this.userSockets.get(hostId);
+      if (hostSocketId) {
+        this.server.to(hostSocketId).emit('seatRequestReceived', {
+          request,
+          user,
+        });
+      }
+
+      return { status: 'requested', request };
+    } catch (error) {
+      this.logger.error(`Request seat failed: ${error.message}`);
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('cancelSeatRequest')
+  async handleCancelSeatRequest(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('roomId') roomId: string,
+  ) {
+    try {
+      const user = client.data.user;
+      await this.voiceRoomsService.cancelSeatRequest(roomId, user.userId);
+
+      const room = await this.voiceRoomsService.findById(roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      const hostSocketId = this.userSockets.get(hostId);
+      if (hostSocketId) {
+        this.server.to(hostSocketId).emit('seatRequestCancelled', {
+          roomId,
+          userId: user.userId,
+        });
+      }
+
+      return { status: 'cancelled' };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('acceptSeatRequest')
+  async handleAcceptSeatRequest(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      roomId: string;
+      requestId: string;
+      targetUserId: string;
+      seatIndex: number;
+    },
+  ) {
+    try {
+      const hostUser = client.data.user;
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      if (hostId !== hostUser.userId) {
+        throw new WsException('Only host can accept seat requests');
+      }
+
+      const targetUser = await this.usersService.findById(data.targetUserId);
+      if (!targetUser) throw new WsException('Target user not found');
+
+      const updatedSeats = await this.voiceRoomsService.takeSeat(
+        data.roomId,
+        data.seatIndex,
+        {
+          userId: targetUser._id.toString(),
+          displayName: targetUser.displayName || targetUser.username,
+          username: targetUser.username,
+          avatarUrl: targetUser.avatarUrl || undefined,
+        },
+      );
+
+      await this.voiceRoomsService.respondToSeatRequest(
+        data.requestId,
+        'accepted',
+      );
+
+      // Notify target user
+      const targetSocketId = this.userSockets.get(data.targetUserId);
+      if (targetSocketId) {
+        this.server.to(targetSocketId).emit('seatRequestAccepted', {
+          roomId: data.roomId,
+          seatIndex: data.seatIndex,
+        });
+      }
+
+      return { status: 'accepted', seats: updatedSeats };
+    } catch (error) {
+      this.logger.error(`Accept seat request failed: ${error.message}`);
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('rejectSeatRequest')
+  async handleRejectSeatRequest(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: { roomId: string; requestId: string; targetUserId: string },
+  ) {
+    try {
+      const hostUser = client.data.user;
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      if (hostId !== hostUser.userId) {
+        throw new WsException('Only host can reject seat requests');
+      }
+
+      await this.voiceRoomsService.respondToSeatRequest(
+        data.requestId,
+        'rejected',
+      );
+
+      const targetSocketId = this.userSockets.get(data.targetUserId);
+      if (targetSocketId) {
+        this.server.to(targetSocketId).emit('seatRequestRejected', {
+          roomId: data.roomId,
+        });
+      }
+
+      return { status: 'rejected' };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('inviteToSeat')
+  async handleInviteToSeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: { roomId: string; targetUserId: string; seatIndex: number },
+  ) {
+    try {
+      const hostUser = client.data.user;
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      if (hostId !== hostUser.userId) {
+        throw new WsException('Only host can invite to seats');
+      }
+
+      const targetSocketId = this.userSockets.get(data.targetUserId);
+      if (targetSocketId) {
+        this.server.to(targetSocketId).emit('seatInviteReceived', {
+          roomId: data.roomId,
+          seatIndex: data.seatIndex,
+          roomTitle: room.title,
+          host: hostUser,
+        });
+      }
+
+      return { status: 'invited' };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('acceptSeatInvite')
+  async handleAcceptSeatInvite(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; seatIndex: number },
+  ) {
+    try {
+      const user = client.data.user;
+      const updatedSeats = await this.voiceRoomsService.takeSeat(
+        data.roomId,
+        data.seatIndex,
+        user,
+      );
+      return { status: 'accepted', seats: updatedSeats };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('rejectSeatInvite')
+  async handleRejectSeatInvite(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; seatIndex: number },
+  ) {
+    try {
+      const user = client.data.user;
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      const hostSocketId = this.userSockets.get(hostId);
+      if (hostSocketId) {
+        this.server.to(hostSocketId).emit('seatInviteRejected', {
+          roomId: data.roomId,
+          seatIndex: data.seatIndex,
+          user,
+        });
+      }
+      return { status: 'rejected' };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('getVoiceRoomViewers')
+  async handleGetVoiceRoomViewers(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('roomId') roomId: string,
+  ) {
+    try {
+      const roomChannel = `voice-${roomId}`;
+      const socketIds = this.server.sockets.adapter.rooms.get(roomChannel);
+      const viewers: any[] = [];
+      if (socketIds) {
+        for (const socketId of socketIds) {
+          const s = this.server.sockets.sockets.get(socketId);
+          if (s?.data?.user) {
+            viewers.push(s.data.user);
+          }
+        }
+      }
+      return { status: 'success', viewers };
+    } catch (error) {
+      return { status: 'error', viewers: [] };
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('leaveSeat')
+  async handleLeaveSeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; seatIndex: number },
+  ) {
+    try {
+      const user = client.data.user;
+      const updatedSeats = await this.voiceRoomsService.leaveSeat(
+        data.roomId,
+        data.seatIndex,
+        user.userId,
+      );
+      return { status: 'left', seats: updatedSeats };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('muteSeat')
+  async handleMuteSeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: { roomId: string; seatIndex: number; isMuted: boolean },
+  ) {
+    try {
+      const hostUser = client.data.user;
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      if (hostId !== hostUser.userId) {
+        throw new WsException('Only host can mute seats');
+      }
+
+      const updatedSeats = await this.voiceRoomsService.muteSeat(
+        data.roomId,
+        data.seatIndex,
+        data.isMuted,
+      );
+
+      const seat = room.seats.find((s) => s.index === data.seatIndex);
+      if (seat?.userId) {
+        const targetSocketId = this.userSockets.get(seat.userId.toString());
+        if (targetSocketId) {
+          this.server.to(targetSocketId).emit('seatMuteChanged', {
+            seatIndex: data.seatIndex,
+            isMuted: data.isMuted,
+          });
+        }
+      }
+
+      return { status: 'success', seats: updatedSeats };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('lockSeat')
+  async handleLockSeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: { roomId: string; seatIndex: number; isLocked: boolean },
+  ) {
+    try {
+      const hostUser = client.data.user;
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      if (hostId !== hostUser.userId) {
+        throw new WsException('Only host can lock seats');
+      }
+
+      const updatedSeats = await this.voiceRoomsService.lockSeat(
+        data.roomId,
+        data.seatIndex,
+        data.isLocked,
+      );
+      return { status: 'success', seats: updatedSeats };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('kickSeat')
+  async handleKickSeat(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; seatIndex: number },
+  ) {
+    try {
+      const hostUser = client.data.user;
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      const hostId =
+        (room.host as any)?._id?.toString() || room.host?.toString();
+      if (hostId !== hostUser.userId) {
+        throw new WsException('Only host can kick from seats');
+      }
+
+      const { seats, kickedUserId } = await this.voiceRoomsService.kickSeat(
+        data.roomId,
+        data.seatIndex,
+      );
+
+      if (kickedUserId) {
+        const targetSocketId = this.userSockets.get(kickedUserId);
+        if (targetSocketId) {
+          this.server.to(targetSocketId).emit('seatKicked', {
+            roomId: data.roomId,
+            seatIndex: data.seatIndex,
+          });
+        }
+      }
+
+      return { status: 'kicked', seats };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('sendVoiceRoomGift')
+  async handleSendVoiceRoomGift(
+    @ConnectedSocket() client: Socket,
+    @MessageBody()
+    data: {
+      roomId: string;
+      gift: {
+        id: string;
+        name: string;
+        price: number;
+        icon: string;
+        animationUrl?: string;
+      };
+      targetSeatIndex: number;
+    },
+  ) {
+    try {
+      const user = client.data.user;
+
+      // 1. Deduct coins from sender
+      const hasEnoughCoins = await this.usersService.deductCoins(
+        user.userId,
+        data.gift.price,
+      );
+      if (!hasEnoughCoins) {
+        client.emit('error', 'Insufficient coins to send this gift');
+        return { status: 'error', message: 'Insufficient coins' };
+      }
+
+      // 2. Identify recipient
+      const room = await this.voiceRoomsService.findById(data.roomId);
+      let recipientId: string;
+      let recipientName = 'Host';
+      let recipientAvatar: string | null = null;
+
+      const targetSeat = room.seats.find(
+        (s) => s.index === data.targetSeatIndex,
+      );
+      if (targetSeat && targetSeat.userId) {
+        recipientId = targetSeat.userId.toString();
+        recipientName = targetSeat.displayName || targetSeat.username || 'User';
+        recipientAvatar = targetSeat.avatarUrl;
+      } else {
+        recipientId =
+          (room.host as any)?._id?.toString() || room.host?.toString();
+        const hostUser = await this.usersService.findById(recipientId);
+        recipientName = hostUser?.displayName || hostUser?.username || 'Host';
+        recipientAvatar = hostUser?.avatarUrl || null;
+      }
+
+      // 3. Add coins and diamonds to recipient
+      await this.usersService.addCoins(recipientId, data.gift.price);
+      await this.usersService.addDiamonds(recipientId, data.gift.price);
+
+      // 4. Grant XP to recipient (3 XP per coin) & sender (1 XP per coin)
+      try {
+        const hostXPResult = await this.levelsService.processXPGain(
+          recipientId,
+          data.gift.price * 3,
+          'receive_gift',
+        );
+        if (hostXPResult?.leveledUp && hostXPResult.newLevel) {
+          const recipientSocketId = this.userSockets.get(recipientId);
+          if (recipientSocketId) {
+            this.server.to(recipientSocketId).emit('levelUp', {
+              userId: recipientId,
+              newLevel: hostXPResult.newLevel,
+              rewards: hostXPResult.rewards,
+            });
+          }
+          this.server.to(`voice-${data.roomId}`).emit('userLevelUp', {
+            user: {
+              _id: recipientId,
+              level: hostXPResult.newLevel.level,
+              badgeUrl: hostXPResult.newLevel.badgeUrl,
+            },
+            newLevel: hostXPResult.newLevel,
+          });
+        }
+      } catch (xpErr) {
+        this.logger.warn(`Voice room recipient XP error: ${xpErr.message}`);
+      }
+
+      try {
+        const senderXPResult = await this.levelsService.processXPGain(
+          user.userId,
+          data.gift.price * 1,
+          'send_gift',
+        );
+        if (senderXPResult?.leveledUp && senderXPResult.newLevel) {
+          client.emit('levelUp', {
+            userId: user.userId,
+            newLevel: senderXPResult.newLevel,
+            rewards: senderXPResult.rewards,
+          });
+          this.server.to(`voice-${data.roomId}`).emit('userLevelUp', {
+            user: {
+              ...user,
+              level: senderXPResult.newLevel.level,
+              badgeUrl: senderXPResult.newLevel.badgeUrl,
+            },
+            newLevel: senderXPResult.newLevel,
+          });
+        }
+      } catch (xpErr) {
+        this.logger.warn(`Voice room sender XP error: ${xpErr.message}`);
+      }
+
+      // 5. Create Transactions
+      await Promise.all([
+        this.transactionsService.create({
+          user: user.userId,
+          amount: -data.gift.price,
+          type: 'gift_sent',
+          referenceId: data.roomId,
+          description: `Sent gift ${data.gift.name} in voice room`,
+          status: 'completed',
+        }),
+        this.transactionsService.create({
+          user: recipientId,
+          amount: data.gift.price,
+          type: 'gift_received',
+          referenceId: data.roomId,
+          description: `Received gift ${data.gift.name} in voice room`,
+          status: 'completed',
+        }),
+      ]);
+
+      // 6. Update room total gifts received
+      await this.voiceRoomsService.addGiftsTotal(data.roomId, data.gift.price);
+
+      // 7. Update session in-memory leaderboard
+      let roomLb = this.voiceRoomLeaderboards.get(data.roomId);
+      if (!roomLb) {
+        roomLb = new Map();
+        this.voiceRoomLeaderboards.set(data.roomId, roomLb);
+      }
+      const prev = roomLb.get(user.userId) || {
+        user: { ...user },
+        totalCoins: 0,
+      };
+      prev.totalCoins += data.gift.price;
+      roomLb.set(user.userId, prev);
+
+      const topGifters = Array.from(roomLb.values())
+        .sort((a, b) => b.totalCoins - a.totalCoins)
+        .slice(0, 10);
+
+      // 8. Emit gift event to all participants in voice room
+      this.server.to(`voice-${data.roomId}`).emit('voiceRoomGiftReceived', {
+        sender: user,
+        recipient: {
+          _id: recipientId,
+          displayName: recipientName,
+          avatarUrl: recipientAvatar,
+        },
+        gift: data.gift,
+        seatIndex: data.targetSeatIndex,
+        topGifters,
+        timestamp: new Date().toISOString(),
+      });
+
+      // 9. Send gift chat message
+      this.server.to(`voice-${data.roomId}`).emit('voiceRoomMessage', {
+        _id: `gift-${Date.now()}-${client.id}`,
+        sender: user,
+        text: `Sent ${data.gift.name} ${data.gift.icon} to ${recipientName}`,
+        type: 'gift',
+        gift: data.gift,
+        recipientName,
+        createdAt: new Date().toISOString(),
+      });
+
+      return { status: 'sent' };
+    } catch (error) {
+      this.logger.error(`Send voice room gift failed: ${error.message}`);
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('sendVoiceRoomMessage')
+  async handleSendVoiceRoomMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { roomId: string; text: string },
+  ) {
+    try {
+      const now = Date.now();
+      const lastMsgTime = this.rateLimits.get(client.id) || 0;
+      if (now - lastMsgTime < 1000) {
+        throw new WsException('You are sending messages too fast.');
+      }
+      this.rateLimits.set(client.id, now);
+
+      const user = client.data.user;
+      const fullUser = await this.usersService.findById(user.userId);
+
+      const message = {
+        _id: `msg-${Date.now()}-${client.id}`,
+        sender: {
+          ...user,
+          currentLevel: fullUser?.currentLevel || 1,
+          levelBadgeUrl: fullUser?.levelBadgeUrl || null,
+        },
+        text: data.text,
+        type: 'text',
+        createdAt: new Date().toISOString(),
+      };
+
+      this.server.to(`voice-${data.roomId}`).emit('voiceRoomMessage', message);
+      return { status: 'sent' };
+    } catch (error) {
+      this.logger.error(`Send voice room message failed: ${error.message}`);
+      client.emit('error', error.message);
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('endVoiceRoom')
+  async handleEndVoiceRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('roomId') roomId: string,
+  ) {
+    try {
+      const user = client.data.user;
+      await this.voiceRoomsService.endRoom(roomId, user.userId, 'host_ended');
+      return { status: 'ended' };
+    } catch (error) {
+      client.emit('error', error.message);
+    }
+  }
+
+  private updateVoiceRoomViewerCount(roomId: string) {
+    const room = this.server.sockets.adapter.rooms.get(`voice-${roomId}`);
+    const viewerCount = room ? room.size : 0;
+    this.server
+      .to(`voice-${roomId}`)
+      .emit('voiceRoomViewerCount', viewerCount);
+    this.voiceRoomsService.updateViewerCount(roomId, viewerCount).catch(() => {});
+  }
+
   // --- HELPER METHODS FOR OTHER SERVICES ---
 
   emitToUser(userId: string, event: string, payload: any) {
@@ -639,3 +1459,4 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return this.userSockets.has(userId.toString());
   }
 }
+

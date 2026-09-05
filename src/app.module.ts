@@ -20,6 +20,7 @@ import { TransactionsModule } from './transactions/transactions.module';
 import { SettingsModule } from './settings/settings.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { StatsModule } from './stats/stats.module';
+import { VoiceRoomsModule } from './voice-rooms/voice-rooms.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { StatsModule } from './stats/stats.module';
     AuthModule,
     CategoriesModule,
     BroadcastsModule,
+    VoiceRoomsModule,
     ChatModule,
     CallsModule,
     StorageModule,
