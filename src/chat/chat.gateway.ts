@@ -624,9 +624,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Handle gift deduction
       if (payload.type === 'gift' && payload.giftData) {
+        const giftCost = Number(
+          payload.giftData.totalPrice ||
+            (payload.giftData.price * (payload.giftData.count || 1)) ||
+            payload.giftData.price ||
+            0,
+        );
         const hasEnoughCoins = await this.usersService.deductCoins(
           user.userId,
-          payload.giftData.price,
+          giftCost,
         );
         if (!hasEnoughCoins) {
           client.emit('error', 'Insufficient coins to send this gift');
@@ -659,8 +665,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Add coins & diamonds to recipient if it's a gift
       if (payload.type === 'gift' && payload.giftData && recipientId) {
-        await this.usersService.addCoins(recipientId, payload.giftData.price);
-        await this.usersService.addDiamonds(recipientId, payload.giftData.price);
+        const giftCost = Number(
+          payload.giftData.totalPrice ||
+            (payload.giftData.price * (payload.giftData.count || 1)) ||
+            payload.giftData.price ||
+            0,
+        );
+        await this.usersService.addCoins(recipientId, giftCost);
+        await this.usersService.addDiamonds(recipientId, giftCost);
+        try {
+          await this.usersService.addXP(user.userId, giftCost);
+        } catch (xpErr) {}
       }
 
       const roomName = `conv-${payload.conversationId}`;
