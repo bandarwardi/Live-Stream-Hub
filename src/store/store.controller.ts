@@ -12,7 +12,7 @@ import {
   BadRequestException,
   Req,
 } from '@nestjs/common';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { StoreService } from './store.service';
 import { CreateStoreItemDto } from './dto/create-store-item.dto';
