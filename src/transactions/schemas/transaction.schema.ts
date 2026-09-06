@@ -38,3 +38,7 @@ export class Transaction extends Document {
 }
 
 export const TransactionSchema = SchemaFactory.createForClass(Transaction);
+
+// Compound indexes for leaderboard aggregations and user transaction history
+TransactionSchema.index({ type: 1, status: 1, createdAt: -1, user: 1 });
+TransactionSchema.index({ user: 1, type: 1, status: 1, createdAt: -1 });

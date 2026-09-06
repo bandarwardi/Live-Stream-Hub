@@ -317,6 +317,44 @@ export class UsersService {
       .exec();
   }
 
+  async updatePkStats(
+    userId: string,
+    update: {
+      result: 'win' | 'loss' | 'draw';
+      newStreak?: number;
+      bestStreak?: number;
+    },
+  ): Promise<User | null> {
+    if (!userId || !Types.ObjectId.isValid(userId)) return null;
+
+    const incObj: any = {};
+    const setObj: any = { pkLastBattleAt: new Date() };
+
+    if (update.result === 'win') {
+      incObj.pkWins = 1;
+      if (update.newStreak !== undefined) {
+        setObj.pkWinStreak = update.newStreak;
+      }
+      if (update.bestStreak !== undefined) {
+        setObj.pkBestStreak = update.bestStreak;
+      }
+    } else if (update.result === 'loss') {
+      incObj.pkLosses = 1;
+      setObj.pkWinStreak = 0;
+    } else if (update.result === 'draw') {
+      incObj.pkDraws = 1;
+      setObj.pkWinStreak = 0;
+    }
+
+    const mongoUpdate: any = { $set: setObj };
+    if (Object.keys(incObj).length > 0) {
+      mongoUpdate.$inc = incObj;
+    }
+
+    return this.userModel
+      .findByIdAndUpdate(userId, mongoUpdate, { returnDocument: 'after' })
+      .exec();
+  }
 
   async findAllForAdmin(page: number = 1, limit: number = 20, search?: string): Promise<{ data: User[], total: number }> {
     const skip = (page - 1) * limit;

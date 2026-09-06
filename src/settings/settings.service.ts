@@ -65,6 +65,30 @@ export class SettingsService implements OnModuleInit {
         value: `نحن في منصة ${BRAND.shortArabicName} نلتزم بحماية خصوصيتك وأمان بياناتك الشخصية. يتم تشفير كافة المعاملات المالية ومعلومات الحساب وفق أعلى بروتوكولات الأمان العالمية.`,
         description: 'Platform privacy and data protection policy',
       },
+      {
+        key: 'pk_victory_bonus_percent',
+        value: 20,
+        description: 'Percentage of winner score awarded as bonus diamonds to PK battle winner',
+      },
+      {
+        key: 'pk_mvp_xp_bonus',
+        value: 50,
+        description: 'XP awarded to the top gifter on each side at the end of a PK battle',
+      },
+      {
+        key: 'pk_duration_seconds',
+        value: 600,
+        description: 'Duration of a PK battle in seconds (default 600s / 10 minutes)',
+      },
+      {
+        key: 'pk_streak_rewards',
+        value: [
+          { streak: 3, diamonds: 50, xp: 100, badge: null, label: 'Hat-trick 🎩' },
+          { streak: 5, diamonds: 150, xp: 250, badge: null, label: 'On Fire 🔥' },
+          { streak: 10, diamonds: 500, xp: 500, badge: 'pk_legend', label: 'PK Legend 👑' },
+        ],
+        description: 'Milestone rewards for consecutive PK battle wins',
+      },
     ];
 
     for (const item of defaultSettings) {
@@ -109,6 +133,23 @@ export class SettingsService implements OnModuleInit {
             { id: 'pkg_4', coins: '2,500', price: '$28.99', popular: false, badge: 'VIP Choice' },
           ],
           description: 'Default coin packages',
+        } as any;
+      }
+      if (key === 'pk_victory_bonus_percent') {
+        return { key, value: 20, description: 'Default PK victory bonus percentage' } as any;
+      }
+      if (key === 'pk_mvp_xp_bonus') {
+        return { key, value: 50, description: 'Default PK MVP XP bonus' } as any;
+      }
+      if (key === 'pk_streak_rewards') {
+        return {
+          key,
+          value: [
+            { streak: 3, diamonds: 50, xp: 100, badge: null, label: 'Hat-trick 🎩' },
+            { streak: 5, diamonds: 150, xp: 250, badge: null, label: 'On Fire 🔥' },
+            { streak: 10, diamonds: 500, xp: 500, badge: 'pk_legend', label: 'PK Legend 👑' },
+          ],
+          description: 'Default PK streak rewards',
         } as any;
       }
       throw new NotFoundException(`Setting with key ${key} not found`);

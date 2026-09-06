@@ -21,6 +21,7 @@ import { SettingsModule } from './settings/settings.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { StatsModule } from './stats/stats.module';
 import { VoiceRoomsModule } from './voice-rooms/voice-rooms.module';
+import { LeaderboardsModule } from './leaderboards/leaderboards.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { VoiceRoomsModule } from './voice-rooms/voice-rooms.module';
     SettingsModule,
     TicketsModule,
     StatsModule,
+    LeaderboardsModule,
   ],
   controllers: [HealthController],
   providers: [],

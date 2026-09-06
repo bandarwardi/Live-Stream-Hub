@@ -1,13 +1,46 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Gift } from './schemas/gift.schema';
 import { CreateGiftDto } from './dto/create-gift.dto';
 import { UpdateGiftDto } from './dto/update-gift.dto';
 
 @Injectable()
-export class GiftsService {
+export class GiftsService implements OnModuleInit {
   constructor(@InjectModel(Gift.name) private giftModel: Model<Gift>) {}
+
+  async onModuleInit() {
+    await this.seed();
+  }
+
+  async seed() {
+    const count = await this.giftModel.countDocuments();
+    if (count === 0) {
+      const defaultGifts = [
+        { name: 'Rose', price: 10, description: 'A lovely red rose', imageUrl: 'https://cdn-icons-png.flaticon.com/512/833/833472.png', isActive: true },
+        { name: 'Crown', price: 120, description: 'A royal crown', imageUrl: 'https://cdn-icons-png.flaticon.com/512/3232/3232772.png', isActive: true },
+        { name: 'Diamond', price: 500, description: 'A shining diamond', imageUrl: 'https://cdn-icons-png.flaticon.com/512/2618/2618245.png', isActive: true },
+        { name: 'Fire', price: 800, description: 'Blazing flame', imageUrl: 'https://cdn-icons-png.flaticon.com/512/785/785116.png', isActive: true },
+        { name: 'Star', price: 1000, description: 'Superstar magic', imageUrl: 'https://cdn-icons-png.flaticon.com/512/1828/1828884.png', isActive: true },
+        { name: 'Rocket', price: 2500, description: 'To the moon!', imageUrl: 'https://cdn-icons-png.flaticon.com/512/1356/1356479.png', isActive: true },
+      ];
+      await this.giftModel.insertMany(defaultGifts);
+    }
+  }
+
+  async findByIdOrName(idOrName: string): Promise<Gift | null> {
+    if (!idOrName) return null;
+    if (Types.ObjectId.isValid(idOrName)) {
+      const gift = await this.giftModel.findById(idOrName).exec();
+      if (gift) return gift;
+    }
+    return this.giftModel
+      .findOne({
+        name: { $regex: new RegExp(`^${idOrName}$`, 'i') },
+        isActive: true,
+      })
+      .exec();
+  }
 
   async create(createGiftDto: CreateGiftDto, imageUrl: string): Promise<Gift> {
     const createdGift = new this.giftModel({

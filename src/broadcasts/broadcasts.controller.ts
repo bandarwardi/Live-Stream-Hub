@@ -39,6 +39,12 @@ export class BroadcastsController {
     return this.broadcastsService.endBroadcast(id);
   }
 
+  @UseGuards(AdminAuthGuard)
+  @Patch('admin/:id/end-pk')
+  async forceEndPk(@Param('id') id: string) {
+    return this.broadcastsService.forceEndPk(id);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('my-active')
   async getMyActiveBroadcast(@CurrentUser() user: any) {
@@ -124,6 +130,16 @@ export class BroadcastsController {
   ) {
     const parsedLimit = limit ? parseInt(limit, 10) : 20;
     return this.broadcastsService.search(q, cursor, parsedLimit);
+  }
+
+  @Get('pk-live')
+  async getActivePkBroadcasts() {
+    return this.broadcastsService.getActivePkBroadcasts();
+  }
+
+  @Get(':id/pk-status')
+  async getPkStatus(@Param('id') id: string) {
+    return this.broadcastsService.getPkStatus(id);
   }
 
   @Get(':id')

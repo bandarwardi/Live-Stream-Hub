@@ -58,6 +58,24 @@ export class User extends Document {
   @Prop({ default: null })
   levelBadgeUrl: string;
 
+  @Prop({ default: 0 })
+  pkWins: number;
+
+  @Prop({ default: 0 })
+  pkLosses: number;
+
+  @Prop({ default: 0 })
+  pkDraws: number;
+
+  @Prop({ default: 0 })
+  pkWinStreak: number;
+
+  @Prop({ default: 0 })
+  pkBestStreak: number;
+
+  @Prop({ default: null })
+  pkLastBattleAt: Date;
+
   @Prop({ type: Array, default: [] })
   inventory: Array<{
     itemId: string;
@@ -136,3 +154,6 @@ UserSchema.set('toJSON', {
 
 // Indexes
 UserSchema.index({ username: 'text', bio: 'text' });
+UserSchema.index({ pkWinStreak: -1, pkBestStreak: -1, pkWins: -1 });
+UserSchema.index({ pkWins: -1, pkWinStreak: -1, pkBestStreak: -1 });
+UserSchema.index({ diamonds: -1 });

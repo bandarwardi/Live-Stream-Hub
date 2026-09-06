@@ -21,6 +21,8 @@ import { ConfigService } from '@nestjs/config';
 import { LevelsService } from '../levels/levels.service';
 import { VoiceRoomsService } from '../voice-rooms/voice-rooms.service';
 import { TransactionsService } from '../transactions/transactions.service';
+import { GiftsService } from '../gifts/gifts.service';
+import { Types } from 'mongoose';
 
 @WebSocketGateway({ cors: { origin: '*' } })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -67,6 +69,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly levelsService: LevelsService,
     private readonly voiceRoomsService: VoiceRoomsService,
     private readonly transactionsService: TransactionsService,
+    private readonly giftsService: GiftsService,
   ) {
     this.broadcastsService.onZombieCleanup = (broadcastIds) => {
       broadcastIds.forEach((id) => {
@@ -103,6 +106,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             reason: reason || 'ended',
           });
         }
+      }
+    };
+
+    // PK Battle Global Callback: emits pkEnded to both broadcast rooms
+    this.broadcastsService.onPkEnded = (endResult) => {
+      if (endResult) {
+        this.server?.to(endResult.broadcastIdA).emit('pkEnded', endResult);
+        this.server?.to(endResult.broadcastIdB).emit('pkEnded', endResult);
       }
     };
 
@@ -434,59 +445,123 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const user = client.data.user;
 
+      // SEC 1 Fix: Verify gift against database catalog - never trust client price
+      const dbGift = await this.giftsService.findByIdOrName(gift.id || gift.name);
+      if (!dbGift || !dbGift.isActive) {
+        client.emit('error', 'Gift not found or no longer active');
+        return { status: 'error', message: 'Gift not found' };
+      }
+
+      const verifiedPrice = dbGift.price;
+      const verifiedGift = {
+        id: dbGift._id.toString(),
+        name: dbGift.name,
+        price: verifiedPrice,
+        icon: gift.icon || 'gift',
+        imageUrl: dbGift.imageUrl,
+        animationUrl: dbGift.animationUrl || gift.animationUrl,
+      };
+
+      // Validate broadcast and broadcaster first BEFORE deducting coins
+      const broadcast = await this.broadcastsService.findById(broadcastId);
+      if (!broadcast || !broadcast.isLive) {
+        client.emit('error', 'Cannot send gift: Broadcast is not live');
+        return { status: 'error', message: 'Broadcast not live' };
+      }
+
+      const broadcasterId =
+        (broadcast.broadcaster as any)._id?.toString() ||
+        broadcast.broadcaster?.toString();
+
+      if (!broadcasterId) {
+        client.emit('error', 'Broadcaster not found');
+        return { status: 'error', message: 'Broadcaster not found' };
+      }
+
+      if (broadcasterId === user.userId) {
+        client.emit('error', 'You cannot send gifts to yourself');
+        return { status: 'error', message: 'Cannot send gift to self' };
+      }
+
       // Deduct coins from sender
       const hasEnoughCoins = await this.usersService.deductCoins(
         user.userId,
-        gift.price,
+        verifiedPrice,
       );
       if (!hasEnoughCoins) {
         client.emit('error', 'Insufficient coins to send this gift');
         return { status: 'error', message: 'Insufficient coins' };
       }
 
-      // Add coins & diamonds to broadcaster
-      const broadcast = await this.broadcastsService.findById(broadcastId);
-      if (broadcast && broadcast.broadcaster) {
-        const broadcasterId =
-          (broadcast.broadcaster as any)._id || broadcast.broadcaster;
-        await this.usersService.addCoins(broadcasterId.toString(), gift.price);
-        await this.usersService.addDiamonds(broadcasterId.toString(), gift.price);
+      // Add diamonds to broadcaster (diamonds are the platform earnings)
+      try {
+        await this.usersService.addDiamonds(broadcasterId, verifiedPrice);
+      } catch (addErr) {
+        // Rollback deducted coins
+        await this.usersService.addCoins(user.userId, verifiedPrice);
+        this.logger.error(`Failed to add diamonds to broadcaster, refunded sender: ${addErr.message}`);
+        client.emit('error', 'Failed to process gift delivery. Coins have been refunded.');
+        return { status: 'error', message: 'Gift processing failed' };
+      }
 
-        // Grant XP to broadcaster (3 XP per coin received - Bigo Live style)
-        try {
-          const hostXPResult = await this.levelsService.processXPGain(
-            broadcasterId.toString(),
-            gift.price * 3,
-            'receive_gift',
-          );
-          if (hostXPResult?.leveledUp && hostXPResult.newLevel) {
-            const hostSocketId = this.userSockets.get(broadcasterId.toString());
-            if (hostSocketId) {
-              this.server.to(hostSocketId).emit('levelUp', {
-                userId: broadcasterId.toString(),
-                newLevel: hostXPResult.newLevel,
-                rewards: hostXPResult.rewards,
-              });
-            }
-            this.server.to(broadcastId).emit('userLevelUp', {
-              user: {
-                _id: broadcasterId,
-                level: hostXPResult.newLevel.level,
-                badgeUrl: hostXPResult.newLevel.badgeUrl,
-              },
+      // Record transactions for sender and broadcaster
+      try {
+        await Promise.all([
+          this.transactionsService.create({
+            user: user.userId,
+            amount: -verifiedPrice,
+            type: 'gift_sent',
+            referenceId: broadcastId,
+            description: `Sent gift ${verifiedGift.name} in live stream`,
+            status: 'completed',
+          }),
+          this.transactionsService.create({
+            user: broadcasterId,
+            amount: verifiedPrice,
+            type: 'gift_received',
+            referenceId: broadcastId,
+            description: `Received gift ${verifiedGift.name} in live stream`,
+            status: 'completed',
+          }),
+        ]);
+      } catch (tErr) {
+        this.logger.error(`CRITICAL: Failed to log live stream gift transactions: ${tErr.message}`);
+      }
+
+      // Grant XP to broadcaster (3 XP per coin received - Bigo Live style)
+      try {
+        const hostXPResult = await this.levelsService.processXPGain(
+          broadcasterId,
+          verifiedPrice * 3,
+          'receive_gift',
+        );
+        if (hostXPResult?.leveledUp && hostXPResult.newLevel) {
+          const hostSocketId = this.userSockets.get(broadcasterId);
+          if (hostSocketId) {
+            this.server.to(hostSocketId).emit('levelUp', {
+              userId: broadcasterId,
               newLevel: hostXPResult.newLevel,
+              rewards: hostXPResult.rewards,
             });
           }
-        } catch (xpErr) {
-          this.logger.warn(`Broadcaster XP gain failed: ${xpErr.message}`);
+          this.server.to(broadcastId).emit('userLevelUp', {
+            user: {
+              _id: broadcasterId,
+              level: hostXPResult.newLevel.level,
+              badgeUrl: hostXPResult.newLevel.badgeUrl,
+            },
+            newLevel: hostXPResult.newLevel,
+          });
         }
+      } catch (xpErr) {
+        this.logger.warn(`Broadcaster XP gain failed: ${xpErr.message}`);
       }
 
       // Grant XP to sender (1 XP per coin spent)
       try {
         const senderXPResult = await this.levelsService.processXPGain(
           user.userId,
-          gift.price * 1,
+          verifiedPrice * 1,
           'send_gift',
         );
         if (senderXPResult?.leveledUp && senderXPResult.newLevel) {
@@ -512,17 +587,37 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Emit gift event to everyone in the room (including the sender, so they see the animation)
       this.server.to(broadcastId).emit('giftReceived', {
         sender: user,
-        gift,
+        gift: verifiedGift,
         timestamp: new Date().toISOString(),
       });
+
+      // Update PK battle scores and top gifters atomically in DB if active
+      const pkResult = await this.broadcastsService.recordPkGift(
+        broadcastId,
+        user,
+        verifiedPrice,
+      );
+      if (pkResult) {
+        this.server.to(pkResult.broadcastIdA).emit('pkTopGiftersUpdated', pkResult.topGifters);
+        this.server.to(pkResult.broadcastIdB).emit('pkTopGiftersUpdated', pkResult.topGifters);
+
+        const scorePayload = {
+          scores: pkResult.scores,
+          addedScore: verifiedPrice,
+          side: pkResult.side,
+          sender: user,
+        };
+        this.server.to(pkResult.broadcastIdA).emit('pkScoreUpdated', scorePayload);
+        this.server.to(pkResult.broadcastIdB).emit('pkScoreUpdated', scorePayload);
+      }
 
       // Optionally send a system message to chat
       const giftMessage = {
         _id: `gift-${Date.now()}-${client.id}`,
         sender: user,
-        text: `Sent a ${gift.name} ${gift.icon}`,
+        text: `Sent a ${verifiedGift.name} ${verifiedGift.icon}`,
         type: 'gift',
-        gift,
+        gift: verifiedGift,
         createdAt: new Date().toISOString(),
       };
       this.server.to(broadcastId).emit('newMessage', giftMessage);
@@ -553,6 +648,185 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const room = this.server.sockets.adapter.rooms.get(broadcastId);
     const viewerCount = room ? room.size : 0;
     this.server.to(broadcastId).emit('viewerCount', viewerCount);
+  }
+
+  // ==========================================
+  //            PK BATTLE EVENTS
+  // ==========================================
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('pkInvite')
+  async handlePkInvite(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('broadcastId') broadcastId: string,
+    @MessageBody('opponentBroadcastId') opponentBroadcastId: string,
+  ) {
+    try {
+      const user = client.data.user;
+      if (!Types.ObjectId.isValid(broadcastId) || !Types.ObjectId.isValid(opponentBroadcastId)) {
+        throw new WsException('Invalid broadcast ID');
+      }
+
+      const result = await this.broadcastsService.invitePk(
+        broadcastId,
+        opponentBroadcastId,
+        user.userId,
+      );
+
+      const invitePayload = {
+        fromBroadcast: result.broadcastA,
+        toBroadcast: result.broadcastB,
+        fromUser: result.broadcastA.broadcaster,
+        toUser: result.broadcastB.broadcaster,
+        durationSeconds: 600,
+        expiresAt: result.broadcastB.pk.inviteExpiresAt,
+      };
+
+      // Emit to opponent's broadcast room so viewers/host see invite
+      this.server.to(opponentBroadcastId).emit('pkInviteReceived', invitePayload);
+
+      // Also directly emit to opponent broadcaster socket if connected
+      const opponentBroadcasterId =
+        (result.broadcastB.broadcaster as any)?._id?.toString() ||
+        result.broadcastB.broadcaster?.toString();
+      if (opponentBroadcasterId) {
+        const socketId = this.userSockets.get(opponentBroadcasterId);
+        if (socketId) {
+          this.server.to(socketId).emit('pkInviteReceived', invitePayload);
+        }
+      }
+
+      return { status: 'invited' };
+    } catch (err) {
+      this.logger.error(`pkInvite error: ${err.message}`);
+      client.emit('error', err.message);
+      return { status: 'error', message: err.message };
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('pkAccept')
+  async handlePkAccept(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('broadcastId') broadcastId: string,
+  ) {
+    try {
+      const user = client.data.user;
+      if (!Types.ObjectId.isValid(broadcastId)) {
+        throw new WsException('Invalid broadcast ID');
+      }
+
+      const result = await this.broadcastsService.acceptPk(
+        broadcastId,
+        user.userId,
+      );
+
+      const broadcastIdA = result.broadcastA._id.toString();
+      const broadcastIdB = result.broadcastB._id.toString();
+
+      const pkStartedPayload = {
+        broadcastA: result.broadcastA,
+        broadcastB: result.broadcastB,
+        hostA: result.broadcastA.broadcaster,
+        hostB: result.broadcastB.broadcaster,
+        startedAt: result.startedAt,
+        endsAt: result.endsAt,
+        durationSeconds: result.durationSeconds,
+        scores: { hostA: 0, hostB: 0 },
+      };
+
+      // Emit to both broadcast rooms
+      this.server.to(broadcastIdA).emit('pkStarted', pkStartedPayload);
+      this.server.to(broadcastIdB).emit('pkStarted', pkStartedPayload);
+
+      return { status: 'started' };
+    } catch (err) {
+      this.logger.error(`pkAccept error: ${err.message}`);
+      client.emit('error', err.message);
+      return { status: 'error', message: err.message };
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('pkDecline')
+  async handlePkDecline(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('broadcastId') broadcastId: string,
+  ) {
+    try {
+      const user = client.data.user;
+      if (!Types.ObjectId.isValid(broadcastId)) {
+        throw new WsException('Invalid broadcast ID');
+      }
+
+      const res = await this.broadcastsService.declinePk(
+        broadcastId,
+        user.userId,
+      );
+      if (res?.opponentBroadcastId) {
+        this.server.to(res.opponentBroadcastId).emit('pkDeclined', { broadcastId });
+      }
+      if (res?.opponentBroadcasterId) {
+        const socketId = this.userSockets.get(res.opponentBroadcasterId);
+        if (socketId) {
+          this.server.to(socketId).emit('pkDeclined', { broadcastId });
+        }
+      }
+      return { status: 'declined' };
+    } catch (err) {
+      this.logger.error(`pkDecline error: ${err.message}`);
+      return { status: 'error', message: err.message };
+    }
+  }
+
+  @UseGuards(WsJwtGuard)
+  @SubscribeMessage('pkEndEarly')
+  async handlePkEndEarly(
+    @ConnectedSocket() client: Socket,
+    @MessageBody('broadcastId') broadcastId: string,
+  ) {
+    try {
+      const user = client.data.user;
+      if (!Types.ObjectId.isValid(broadcastId)) {
+        throw new WsException('Invalid broadcast ID');
+      }
+
+      const broadcast = await this.broadcastsService.findById(broadcastId);
+      if (!broadcast || broadcast.pk?.status !== 'active') {
+        return { status: 'no_active_pk' };
+      }
+
+      const broadcasterId =
+        (broadcast.broadcaster as any)?._id?.toString() ||
+        broadcast.broadcaster?.toString();
+      const opponentBroadcasterId = broadcast.pk.opponentUserId?.toString();
+
+      // Auth check: Verify requester is one of the participating broadcasters
+      if (user.userId !== broadcasterId && user.userId !== opponentBroadcasterId) {
+        throw new WsException('Only participating broadcasters can end the PK battle');
+      }
+
+      const opponentBroadcastId = broadcast.pk.opponentBroadcastId?.toString();
+      if (!opponentBroadcastId || !Types.ObjectId.isValid(opponentBroadcastId)) {
+        return { status: 'invalid_opponent' };
+      }
+
+      const broadcastIdA =
+        broadcast.pk.pkRole === 'hostA' ? broadcastId : opponentBroadcastId;
+      const broadcastIdB =
+        broadcast.pk.pkRole === 'hostA' ? opponentBroadcastId : broadcastId;
+
+      await this.broadcastsService.endPk(
+        broadcastIdA,
+        broadcastIdB,
+        'early_end',
+      );
+
+      return { status: 'ended' };
+    } catch (err) {
+      this.logger.error(`pkEndEarly error: ${err.message}`);
+      return { status: 'error', message: err.message };
+    }
   }
 
   // --- DIRECT MESSAGING EVENTS ---
@@ -622,60 +896,125 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const user = client.data.user;
 
-      // Handle gift deduction
+      if (!payload.conversationId || !Types.ObjectId.isValid(payload.conversationId)) {
+        client.emit('error', 'Invalid conversation ID');
+        return { status: 'error', message: 'Invalid conversation ID' };
+      }
+
+      // Pre-validate conversation and participant
+      const conversation = await (
+        this.conversationsService as any
+      ).conversationModel.findById(payload.conversationId);
+      if (!conversation) {
+        client.emit('error', 'Conversation not found');
+        return { status: 'error', message: 'Conversation not found' };
+      }
+
+      const isParticipant = conversation.participants.some(
+        (p) => p.toString() === user.userId,
+      );
+      if (!isParticipant) {
+        client.emit('error', 'You are not a participant of this conversation');
+        return { status: 'error', message: 'Not a participant' };
+      }
+
+      const recipientId = conversation.participants
+        .find((p) => p.toString() !== user.userId)
+        ?.toString();
+
+      let verifiedGiftCost = 0;
+      let verifiedGiftName = 'Gift';
+
+      // Handle gift deduction with database catalog validation
       if (payload.type === 'gift' && payload.giftData) {
-        const giftCost = Number(
-          payload.giftData.totalPrice ||
-            (payload.giftData.price * (payload.giftData.count || 1)) ||
-            payload.giftData.price ||
-            0,
-        );
+        if (!recipientId) {
+          client.emit('error', 'Cannot send gift: Recipient not found');
+          return { status: 'error', message: 'Recipient not found' };
+        }
+
+        const giftIdentifier =
+          payload.giftData.id || payload.giftData._id || payload.giftData.name;
+        const dbGift = await this.giftsService.findByIdOrName(giftIdentifier);
+        if (!dbGift || !dbGift.isActive) {
+          client.emit('error', 'Gift not found or no longer active');
+          return { status: 'error', message: 'Gift not found' };
+        }
+
+        const giftCount = Math.max(Number(payload.giftData.count) || 1, 1);
+        verifiedGiftCost = dbGift.price * giftCount;
+        verifiedGiftName = dbGift.name;
+
+        payload.giftData = {
+          ...payload.giftData,
+          id: dbGift._id.toString(),
+          name: dbGift.name,
+          price: dbGift.price,
+          count: giftCount,
+          totalPrice: verifiedGiftCost,
+          imageUrl: dbGift.imageUrl,
+          animationUrl: dbGift.animationUrl,
+        };
+
         const hasEnoughCoins = await this.usersService.deductCoins(
           user.userId,
-          giftCost,
+          verifiedGiftCost,
         );
         if (!hasEnoughCoins) {
           client.emit('error', 'Insufficient coins to send this gift');
           return { status: 'error', message: 'Insufficient coins' };
         }
-
-        // Find recipient to add coins
-        // We will fetch the conversation to find the other participant
-        // This is handled in the service but we need to do it here for coins
-        // Actually, we can fetch conversation first
       }
 
-      // Save message
-      const savedMessage = await this.conversationsService.saveMessage({
-        conversationId: payload.conversationId,
-        senderId: user.userId,
-        type: payload.type,
-        text: payload.text,
-        mediaUrl: payload.mediaUrl,
-        giftData: payload.giftData,
-      });
+      // Save message with rollback protection
+      let savedMessage;
+      try {
+        savedMessage = await this.conversationsService.saveMessage({
+          conversationId: payload.conversationId,
+          senderId: user.userId,
+          type: payload.type,
+          text: payload.text,
+          mediaUrl: payload.mediaUrl,
+          giftData: payload.giftData,
+        });
+      } catch (saveErr) {
+        if (payload.type === 'gift' && verifiedGiftCost > 0) {
+          await this.usersService.addCoins(user.userId, verifiedGiftCost);
+        }
+        throw saveErr;
+      }
 
-      // Get conversation once for recipient logic
-      const conversation = await (
-        this.conversationsService as any
-      ).conversationModel.findById(payload.conversationId);
-      const recipientId = conversation?.participants
-        .find((p) => p.toString() !== user.userId)
-        ?.toString();
-
-      // Add coins & diamonds to recipient if it's a gift
-      if (payload.type === 'gift' && payload.giftData && recipientId) {
-        const giftCost = Number(
-          payload.giftData.totalPrice ||
-            (payload.giftData.price * (payload.giftData.count || 1)) ||
-            payload.giftData.price ||
-            0,
-        );
-        await this.usersService.addCoins(recipientId, giftCost);
-        await this.usersService.addDiamonds(recipientId, giftCost);
+      // Add diamonds & record transactions if gift
+      if (payload.type === 'gift' && recipientId && verifiedGiftCost > 0) {
         try {
-          await this.usersService.addXP(user.userId, giftCost);
-        } catch (xpErr) {}
+          await this.usersService.addDiamonds(recipientId, verifiedGiftCost);
+          await this.usersService.addXP(user.userId, verifiedGiftCost);
+        } catch (rewardErr) {
+          this.logger.warn(`Failed to credit recipient diamonds/XP: ${rewardErr.message}`);
+        }
+
+        // Record transactions for DM gifts
+        try {
+          await Promise.all([
+            this.transactionsService.create({
+              user: user.userId,
+              amount: -verifiedGiftCost,
+              type: 'gift_sent',
+              referenceId: payload.conversationId,
+              description: `Sent gift ${verifiedGiftName} in chat`,
+              status: 'completed',
+            }),
+            this.transactionsService.create({
+              user: recipientId,
+              amount: verifiedGiftCost,
+              type: 'gift_received',
+              referenceId: payload.conversationId,
+              description: `Received gift ${verifiedGiftName} in chat`,
+              status: 'completed',
+            }),
+          ]);
+        } catch (tErr) {
+          this.logger.error(`Failed to log DM gift transactions: ${tErr.message}`);
+        }
       }
 
       const roomName = `conv-${payload.conversationId}`;
@@ -1241,8 +1580,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const user = client.data.user;
 
-      // 1. Identify recipient
+      // 1. Validate room
       const room = await this.voiceRoomsService.findById(data.roomId);
+      if (!room || !room.isLive) {
+        client.emit('error', 'Voice room is not active');
+        return { status: 'error', message: 'Voice room not active' };
+      }
+
+      // 2. Validate gift from database catalog - never trust client price
+      const giftIdOrName = data.gift?.id || data.gift?.name;
+      const dbGift = await this.giftsService.findByIdOrName(giftIdOrName);
+      if (!dbGift || !dbGift.isActive) {
+        client.emit('error', 'Gift not found or no longer active');
+        return { status: 'error', message: 'Gift not found' };
+      }
+
+      const verifiedPrice = dbGift.price;
+      const verifiedGift = {
+        id: dbGift._id.toString(),
+        name: dbGift.name,
+        price: verifiedPrice,
+        icon: data.gift?.icon || 'gift',
+        imageUrl: dbGift.imageUrl,
+        animationUrl: dbGift.animationUrl || data.gift?.animationUrl,
+      };
+
+      // 3. Identify recipient
       let recipientId: string;
       let recipientName = 'Host';
       let recipientAvatar: string | null = null;
@@ -1268,25 +1631,31 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         return { status: 'error', message: 'You cannot send gifts to yourself' };
       }
 
-      // 2. Deduct coins from sender
+      // 4. Deduct coins from sender
       const hasEnoughCoins = await this.usersService.deductCoins(
         user.userId,
-        data.gift.price,
+        verifiedPrice,
       );
       if (!hasEnoughCoins) {
         client.emit('error', 'Insufficient coins to send this gift');
         return { status: 'error', message: 'Insufficient coins' };
       }
 
-      // 3. Add coins and diamonds to recipient
-      await this.usersService.addCoins(recipientId, data.gift.price);
-      await this.usersService.addDiamonds(recipientId, data.gift.price);
+      // 5. Add diamonds to recipient (gift earnings) with rollback on failure
+      try {
+        await this.usersService.addDiamonds(recipientId, verifiedPrice);
+      } catch (diamondErr) {
+        await this.usersService.addCoins(user.userId, verifiedPrice);
+        this.logger.error(`Failed to credit diamonds in voice room, refunded sender: ${diamondErr.message}`);
+        client.emit('error', 'Failed to process voice room gift. Coins refunded.');
+        return { status: 'error', message: 'Gift processing failed' };
+      }
 
-      // 4. Grant XP to recipient (3 XP per coin) & sender (1 XP per coin)
+      // 6. Grant XP to recipient (3 XP per coin) & sender (1 XP per coin)
       try {
         const hostXPResult = await this.levelsService.processXPGain(
           recipientId,
-          data.gift.price * 3,
+          verifiedPrice * 3,
           'receive_gift',
         );
         if (hostXPResult?.leveledUp && hostXPResult.newLevel) {
@@ -1314,7 +1683,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       try {
         const senderXPResult = await this.levelsService.processXPGain(
           user.userId,
-          data.gift.price * 1,
+          verifiedPrice * 1,
           'send_gift',
         );
         if (senderXPResult?.leveledUp && senderXPResult.newLevel) {
@@ -1336,28 +1705,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.warn(`Voice room sender XP error: ${xpErr.message}`);
       }
 
-      // 5. Create Transactions
-      await Promise.all([
-        this.transactionsService.create({
-          user: user.userId,
-          amount: -data.gift.price,
-          type: 'gift_sent',
-          referenceId: data.roomId,
-          description: `Sent gift ${data.gift.name} in voice room`,
-          status: 'completed',
-        }),
-        this.transactionsService.create({
-          user: recipientId,
-          amount: data.gift.price,
-          type: 'gift_received',
-          referenceId: data.roomId,
-          description: `Received gift ${data.gift.name} in voice room`,
-          status: 'completed',
-        }),
-      ]);
+      // 7. Create Transactions
+      try {
+        await Promise.all([
+          this.transactionsService.create({
+            user: user.userId,
+            amount: -verifiedPrice,
+            type: 'gift_sent',
+            referenceId: data.roomId,
+            description: `Sent gift ${verifiedGift.name} in voice room`,
+            status: 'completed',
+          }),
+          this.transactionsService.create({
+            user: recipientId,
+            amount: verifiedPrice,
+            type: 'gift_received',
+            referenceId: data.roomId,
+            description: `Received gift ${verifiedGift.name} in voice room`,
+            status: 'completed',
+          }),
+        ]);
+      } catch (tErr) {
+        this.logger.error(`Failed to log voice room gift transactions: ${tErr.message}`);
+      }
 
-      // 6. Update room total gifts received
-      await this.voiceRoomsService.addGiftsTotal(data.roomId, data.gift.price);
+      // 8. Update room total gifts received
+      await this.voiceRoomsService.addGiftsTotal(data.roomId, verifiedPrice);
 
       // 7. Update session in-memory leaderboard
       let roomLb = this.voiceRoomLeaderboards.get(data.roomId);
@@ -1369,7 +1742,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         user: { ...user },
         totalCoins: 0,
       };
-      prev.totalCoins += data.gift.price;
+      prev.totalCoins += verifiedPrice;
       roomLb.set(user.userId, prev);
 
       const topGifters = Array.from(roomLb.values())
@@ -1384,7 +1757,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
           displayName: recipientName,
           avatarUrl: recipientAvatar,
         },
-        gift: data.gift,
+        gift: verifiedGift,
         seatIndex: data.targetSeatIndex,
         topGifters,
         timestamp: new Date().toISOString(),
@@ -1394,9 +1767,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.server.to(`voice-${data.roomId}`).emit('voiceRoomMessage', {
         _id: `gift-${Date.now()}-${client.id}`,
         sender: user,
-        text: `Sent ${data.gift.name} ${data.gift.icon} to ${recipientName}`,
+        text: `Sent ${verifiedGift.name} ${verifiedGift.icon} to ${recipientName}`,
         type: 'gift',
-        gift: data.gift,
+        gift: verifiedGift,
         recipientName,
         createdAt: new Date().toISOString(),
       });

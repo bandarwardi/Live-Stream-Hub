@@ -50,6 +50,7 @@ export class WsJwtGuard implements CanActivate {
         userId: payload.sub,
         username: user.username,
         displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
       };
 
       return true;
