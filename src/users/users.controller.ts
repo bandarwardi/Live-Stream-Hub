@@ -13,6 +13,8 @@ import {
   Delete,
   NotFoundException,
   Request,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { FollowsService } from '../follows/follows.service';
@@ -27,6 +29,7 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly storageService: StorageService,
+    @Inject(forwardRef(() => FollowsService))
     private readonly followsService: FollowsService,
   ) {}
 

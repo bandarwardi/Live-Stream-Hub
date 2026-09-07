@@ -3,6 +3,8 @@ import {
   BadRequestException,
   NotFoundException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -28,6 +30,7 @@ export class NotificationsService {
   constructor(
     @InjectModel(Notification.name)
     private readonly notificationModel: Model<NotificationDocument>,
+    @Inject(forwardRef(() => UsersService))
     private readonly usersService: UsersService,
     private readonly firebaseService: FirebaseService,
   ) {}
