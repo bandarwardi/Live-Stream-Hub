@@ -22,6 +22,8 @@ import { TicketsModule } from './tickets/tickets.module';
 import { StatsModule } from './stats/stats.module';
 import { VoiceRoomsModule } from './voice-rooms/voice-rooms.module';
 import { LeaderboardsModule } from './leaderboards/leaderboards.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -60,6 +62,8 @@ import { LeaderboardsModule } from './leaderboards/leaderboards.module';
     TicketsModule,
     StatsModule,
     LeaderboardsModule,
+    NotificationsModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
   providers: [],

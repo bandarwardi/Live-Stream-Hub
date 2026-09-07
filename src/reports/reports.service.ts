@@ -4,17 +4,36 @@ import { Model } from 'mongoose';
 import { Report } from './schemas/report.schema';
 import { CreateReportDto } from './dto/create-report.dto';
 import { UpdateReportDto } from './dto/update-report.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ReportsService {
-  constructor(@InjectModel(Report.name) private reportModel: Model<Report>) {}
+  constructor(
+    @InjectModel(Report.name) private reportModel: Model<Report>,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   async create(reporterId: string, createReportDto: CreateReportDto): Promise<Report> {
     const report = new this.reportModel({
       ...createReportDto,
       reporter: reporterId,
     });
-    return report.save();
+    const saved = await report.save();
+
+    // Trigger admin alert for moderators
+    this.notificationsService.sendAdminAlert({
+      type: 'NEW_REPORT',
+      title: 'بلاغ جديد ⚠️',
+      message: `تم رفع بلاغ جديد: ${createReportDto.reason}`,
+      data: {
+        reportId: saved._id.toString(),
+        reportedUser: createReportDto.reportedUser,
+        reportedBroadcast: createReportDto.reportedBroadcast,
+        reason: createReportDto.reason,
+      },
+    });
+
+    return saved;
   }
 
   async findAllForAdmin(page: number = 1, limit: number = 20, status?: string): Promise<{ data: Report[]; total: number }> {

@@ -1,11 +1,20 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import { Injectable, ConflictException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Follow } from './schemas/follow.schema';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/schemas/notification.schema';
+import { UsersService } from '../users/users.service';
 
 @Injectable()
 export class FollowsService {
-  constructor(@InjectModel(Follow.name) private followModel: Model<Follow>) {}
+  constructor(
+    @InjectModel(Follow.name) private followModel: Model<Follow>,
+    @Inject(forwardRef(() => NotificationsService))
+    private readonly notificationsService: NotificationsService,
+    @Inject(forwardRef(() => UsersService))
+    private readonly usersService: UsersService,
+  ) {}
 
   async follow(followerId: string, followingId: string): Promise<void> {
     if (followerId === followingId) {
@@ -17,6 +26,25 @@ export class FollowsService {
         follower: followerId,
         following: followingId,
       });
+
+      // Dispatch Follow notification
+      this.usersService
+        .findById(followerId)
+        .then((followerUser) => {
+          const name =
+            followerUser?.displayName || followerUser?.username || 'مستخدم جديد';
+          this.notificationsService
+            .createAndSend({
+              recipientId: followingId,
+              senderId: followerId,
+              type: NotificationType.NEW_FOLLOWER,
+              title: 'متابع جديد 👤',
+              message: `بدأ ${name} بمتابعتك`,
+              data: { userId: followerId },
+            })
+            .catch(() => {});
+        })
+        .catch(() => {});
     } catch (error: any) {
       if (error.code === 11000) {
         // Already following, ignore

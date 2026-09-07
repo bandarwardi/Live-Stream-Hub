@@ -22,6 +22,7 @@ import { LevelsModule } from '../levels/levels.module';
 import { VoiceRoomsModule } from '../voice-rooms/voice-rooms.module';
 import { TransactionsModule } from '../transactions/transactions.module';
 import { GiftsModule } from '../gifts/gifts.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { GiftsModule } from '../gifts/gifts.module';
     FirebaseModule,
     LevelsModule,
     GiftsModule,
+    NotificationsModule,
   ],
   controllers: [ConversationsController],
   providers: [ChatService, ChatGateway, ConversationsService],

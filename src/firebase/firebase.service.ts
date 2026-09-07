@@ -87,4 +87,22 @@ export class FirebaseService implements OnModuleInit {
       this.logger.error('Error sending push notification:', error);
     }
   }
+
+  async sendTopicNotification(
+    topic: string,
+    title: string,
+    body: string,
+    data?: any,
+  ) {
+    if (!this.firebaseApp) return;
+    try {
+      await this.getMessaging().send({
+        topic,
+        notification: { title, body },
+        data: data || {},
+      });
+    } catch (error) {
+      this.logger.error(`Error sending push notification to topic ${topic}:`, error);
+    }
+  }
 }

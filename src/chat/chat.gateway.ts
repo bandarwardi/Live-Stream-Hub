@@ -22,6 +22,8 @@ import { LevelsService } from '../levels/levels.service';
 import { VoiceRoomsService } from '../voice-rooms/voice-rooms.service';
 import { TransactionsService } from '../transactions/transactions.service';
 import { GiftsService } from '../gifts/gifts.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/schemas/notification.schema';
 import { Types } from 'mongoose';
 
 @WebSocketGateway({ cors: { origin: '*' } })
@@ -70,6 +72,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly voiceRoomsService: VoiceRoomsService,
     private readonly transactionsService: TransactionsService,
     private readonly giftsService: GiftsService,
+    private readonly notificationsService: NotificationsService,
   ) {
     this.broadcastsService.onZombieCleanup = (broadcastIds) => {
       broadcastIds.forEach((id) => {
@@ -155,6 +158,25 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         seats,
       });
     };
+
+    // Realtime Notifications Callback Hooks
+    this.notificationsService.onNotificationCreated = (notification) => {
+      const recipientId =
+        notification.recipient?._id?.toString() ||
+        notification.recipient?.toString();
+      if (recipientId) {
+        // Emitting to the room 'user-${recipientId}' ensures delivery to all of the user's active devices without duplicates
+        this.server?.to(`user-${recipientId}`).emit('newNotification', notification);
+      }
+    };
+
+    this.notificationsService.onAdminBroadcast = (broadcast) => {
+      this.server?.emit('adminBroadcast', broadcast);
+    };
+
+    this.notificationsService.onAdminAlert = (alert) => {
+      this.server?.to('admin_room').emit('newAdminAlert', alert);
+    };
   }
 
   async handleConnection(client: Socket) {
@@ -184,6 +206,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         avatarUrl: user.avatarUrl,
       };
       this.userSockets.set(payload.sub, client.id);
+      client.join(`user-${payload.sub}`);
       this.logger.log(`Client connected: ${client.id} (${user.username})`);
     } catch (error) {
       this.logger.error(
@@ -263,6 +286,12 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }).catch(() => {});
       this.updateVoiceRoomViewerCount(vRoomId);
     }
+  }
+
+  @SubscribeMessage('joinAdminRoom')
+  handleJoinAdminRoom(@ConnectedSocket() client: Socket) {
+    client.join('admin_room');
+    return { status: 'joined_admin_room' };
   }
 
   @UseGuards(WsJwtGuard)
@@ -552,6 +581,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             },
             newLevel: hostXPResult.newLevel,
           });
+
+          this.notificationsService
+            .createAndSend({
+              recipientId: broadcasterId,
+              type: NotificationType.LEVEL_UP,
+              title: 'ترقية المستوى! 🌟',
+              message: `تهانينا! لقد وصلت إلى المستوى ${hostXPResult.newLevel.level}`,
+              data: { level: hostXPResult.newLevel.level },
+            })
+            .catch((e) =>
+              this.logger.error('Failed to send level up notification:', e),
+            );
         }
       } catch (xpErr) {
         this.logger.warn(`Broadcaster XP gain failed: ${xpErr.message}`);
@@ -578,11 +619,22 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
             },
             newLevel: senderXPResult.newLevel,
           });
+
+          this.notificationsService
+            .createAndSend({
+              recipientId: user.userId,
+              type: NotificationType.LEVEL_UP,
+              title: 'ترقية المستوى! 🌟',
+              message: `تهانينا! لقد وصلت إلى المستوى ${senderXPResult.newLevel.level}`,
+              data: { level: senderXPResult.newLevel.level },
+            })
+            .catch((e) =>
+              this.logger.error('Failed to send level up notification:', e),
+            );
         }
       } catch (xpErr) {
         this.logger.warn(`Sender XP gain failed: ${xpErr.message}`);
       }
-
 
       // Emit gift event to everyone in the room (including the sender, so they see the animation)
       this.server.to(broadcastId).emit('giftReceived', {
@@ -590,6 +642,24 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         gift: verifiedGift,
         timestamp: new Date().toISOString(),
       });
+
+      // Dispatch in-app and push notification for gift to broadcaster
+      this.notificationsService
+        .createAndSend({
+          recipientId: broadcasterId,
+          senderId: user.userId,
+          type: NotificationType.GIFT_RECEIVED,
+          title: 'هدية جديدة 🎁',
+          message: `أرسل لك ${user.displayName || user.username} هدية ${verifiedGift.name}`,
+          data: {
+            broadcastId,
+            giftId: verifiedGift.id,
+            coins: verifiedPrice,
+          },
+        })
+        .catch((e) =>
+          this.logger.error('Failed to create gift notification:', e),
+        );
 
       // Update PK battle scores and top gifters atomically in DB if active
       const pkResult = await this.broadcastsService.recordPkGift(
@@ -694,6 +764,23 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         if (socketId) {
           this.server.to(socketId).emit('pkInviteReceived', invitePayload);
         }
+
+        // Dispatch PK Invite notification
+        this.notificationsService
+          .createAndSend({
+            recipientId: opponentBroadcasterId,
+            senderId: user.userId,
+            type: NotificationType.PK_INVITE,
+            title: 'دعوة تحدي PK ⚔️',
+            message: `دعاك ${user.displayName || user.username} لخوض تحدي PK مباشر!`,
+            data: {
+              fromBroadcastId: broadcastId,
+              toBroadcastId: opponentBroadcastId,
+            },
+          })
+          .catch((e) =>
+            this.logger.error('Failed to create PK notification:', e),
+          );
       }
 
       return { status: 'invited' };
