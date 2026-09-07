@@ -24,6 +24,7 @@ import { VoiceRoomsModule } from './voice-rooms/voice-rooms.module';
 import { LeaderboardsModule } from './leaderboards/leaderboards.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReportsModule } from './reports/reports.module';
+import { BannersModule } from './banners/banners.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { ReportsModule } from './reports/reports.module';
     LeaderboardsModule,
     NotificationsModule,
     ReportsModule,
+    BannersModule,
   ],
   controllers: [HealthController],
   providers: [],
