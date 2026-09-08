@@ -32,6 +32,10 @@ export class CompleteProfileDto {
 
   @IsOptional()
   @IsString()
+  coverUrl?: string;
+
+  @IsOptional()
+  @IsString()
   @Length(2, 50, { message: 'الاسم يجب أن يكون بين 2 و 50 حرفاً' })
   displayName?: string;
 
@@ -42,4 +46,9 @@ export class CompleteProfileDto {
   @IsOptional()
   @IsString()
   birthdate?: Date;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 300, { message: 'النبذة يجب أن تكون أقل من 300 حرف' })
+  bio?: string;
 }
